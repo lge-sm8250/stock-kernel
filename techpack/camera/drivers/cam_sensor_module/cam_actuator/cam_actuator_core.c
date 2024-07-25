@@ -101,14 +101,23 @@ static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 	}
 
 	power_info->dev = soc_info->dev;
-
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+	if (a_ctrl->soc_info.index == 3) {
+		rc = cam_sensor_core_power_up(power_info, soc_info);
+		if (rc) {
+			CAM_ERR(CAM_ACTUATOR,
+				"failed in actuator power up rc %d", rc);
+			return rc;
+		}
+	}
+#else
 	rc = cam_sensor_core_power_up(power_info, soc_info);
 	if (rc) {
 		CAM_ERR(CAM_ACTUATOR,
 			"failed in actuator power up rc %d", rc);
 		return rc;
 	}
-
+#endif
 	rc = camera_io_init(&a_ctrl->io_master_info);
 	if (rc < 0)
 		CAM_ERR(CAM_ACTUATOR, "cci init failed: rc: %d", rc);
@@ -137,12 +146,21 @@ static int32_t cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl)
 		CAM_ERR(CAM_ACTUATOR, "failed: power_info %pK", power_info);
 		return -EINVAL;
 	}
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+	if (a_ctrl->soc_info.index == 3) {
+		rc = cam_sensor_util_power_down(power_info, soc_info);
+		if (rc) {
+			CAM_ERR(CAM_ACTUATOR, "power down the core is failed:%d", rc);
+			return rc;
+		}
+	}
+#else
 	rc = cam_sensor_util_power_down(power_info, soc_info);
 	if (rc) {
 		CAM_ERR(CAM_ACTUATOR, "power down the core is failed:%d", rc);
 		return rc;
 	}
-
+#endif
 	camera_io_release(&a_ctrl->io_master_info);
 
 	return rc;
@@ -589,12 +607,23 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 			a_ctrl->cam_act_state = CAM_ACTUATOR_CONFIG;
 		}
 
+#ifndef CONFIG_MACH_LAGOON_SMASHJLM
 		rc = cam_actuator_apply_settings(a_ctrl,
 			&a_ctrl->i2c_data.init_settings);
 		if (rc < 0) {
 			CAM_ERR(CAM_ACTUATOR, "Cannot apply Init settings");
 			goto end;
 		}
+#else
+		if (a_ctrl->soc_info.index == 3) {
+			rc = cam_actuator_apply_settings(a_ctrl,
+				&a_ctrl->i2c_data.init_settings);
+			if (rc < 0) {
+				CAM_ERR(CAM_ACTUATOR, "Cannot apply Init settings");
+				return rc;
+			}
+		}
+#endif
 
 		/* Delete the request even if the apply is failed */
 		rc = delete_request(&a_ctrl->i2c_data.init_settings);

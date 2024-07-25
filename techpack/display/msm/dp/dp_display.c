@@ -54,8 +54,7 @@ extern int is_dd_connected(void);
 #ifdef CONFIG_LGE_DISPLAY_COMMON
 #include "../lge/dp/lge_dp.h"
 #endif
-
-#define DP_MST_DEBUG(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
+#define DP_MST_DEBUG(fmt, ...) DP_DEBUG(fmt, ##__VA_ARGS__)
 
 #define dp_display_state_show(x) { \
 	DP_ERR("%s: state (0x%x): %s\n", x, dp->state, \
@@ -362,6 +361,7 @@ static void dp_display_check_source_hdcp_caps(struct dp_display_private *dp)
 		DP_DEBUG("hdcp disabled\n");
 		return;
 	}
+
 	for (i = 0; i < HDCP_VERSION_MAX; i++) {
 		struct dp_hdcp_dev *dev = &hdcp_dev[i];
 		struct sde_hdcp_ops *ops = dev->ops;
@@ -378,10 +378,12 @@ static void dp_display_check_source_hdcp_caps(struct dp_display_private *dp)
 				ops->feature_supported(fd))
 			dp->hdcp.source_cap |= dev->ver;
 
-#if defined(CONFIG_MACH_KONA_TIMELM)
-		if (i >= HDCP_VERSION_1X) {
-			DP_INFO("Limit HDCP version 1X for TIME\n");
-			break;
+#if defined(CONFIG_LGE_DUAL_SCREEN)
+		if (is_ds_connected()) {
+			if (i >= HDCP_VERSION_1X) {
+				DP_INFO("Limit HDCP version 1X for DS\n");
+				break;
+			}
 		}
 #endif
 	}
@@ -760,6 +762,7 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 #else
 	DP_INFO("[%s]:[%s] [%s] [%s]\n", name, status, bpp, pattern);
 #endif
+
 	envp[0] = name;
 	envp[1] = status;
 	envp[2] = bpp;
@@ -827,10 +830,10 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp)
 	 * notifications.
 	 */
 	if (dp_display_state_is(DP_STATE_CONNECT_NOTIFIED) && hpd) {
-		DP_DEBUG("connection notified already, skip notification\n");
+		DP_INFO("connection notified already, skip notification\n");
 		goto skip_wait;
 	} else if (dp_display_state_is(DP_STATE_DISCONNECT_NOTIFIED) && !hpd) {
-		DP_DEBUG("disonnect notified already, skip notification\n");
+		DP_INFO("disonnect notified already, skip notification\n");
 		goto skip_wait;
 	}
 
@@ -1188,12 +1191,12 @@ static int dp_display_process_hpd_low(struct dp_display_private *dp)
 
 	dp_display_state_remove(DP_STATE_CONNECTED);
 	dp->process_hpd_connect = false;
-	dp_audio_enable(dp, false);
 
 #ifdef CONFIG_LGE_DISPLAY_COMMON
 	lge_set_dp_hpd(&dp->dp_display, 0);
 #endif
 
+	dp_audio_enable(dp, false);
 	dp_display_process_mst_hpd_low(dp);
 
 	if ((dp_display_state_is(DP_STATE_CONNECT_NOTIFIED) ||
@@ -1238,10 +1241,10 @@ static int dp_display_usbpd_configure_cb(struct device *dev)
 	}
 
 #if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
-        if (is_ds_connected()) {
-                DP_INFO("default Orientation is CC2 for DS");
-                dp->hpd->orientation = ORIENTATION_CC2;
-        }
+	if (is_ds_connected()) {
+		DP_INFO("default Orientation is CC2 for DS");
+		dp->hpd->orientation = ORIENTATION_CC2;
+	}
 #endif
 
 	if (!dp->debug->sim_mode && !dp->parser->no_aux_switch
@@ -1261,15 +1264,22 @@ static int dp_display_usbpd_configure_cb(struct device *dev)
 	/* check for hpd high */
 	if (dp->hpd->hpd_high)
 		queue_work(dp->wq, &dp->connect_work);
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
 #if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
 	else {
 		dp->process_hpd_connect = true;
-		if (is_ds_connected())
-		{
+		if (is_ds_connected()) {
 			dp_display_host_deinit(dp);
 			dp_display_state_add(DP_STATE_SRC_PWRDN);
 		}
 	}
+#else
+	else {
+		dp->process_hpd_connect = true;
+		dp_display_host_deinit(dp);
+		dp_display_state_add(DP_STATE_SRC_PWRDN);
+	}
+#endif
 #else //qct origin
 	else
 		dp->process_hpd_connect = true;
@@ -1359,10 +1369,16 @@ static int dp_display_handle_disconnect(struct dp_display_private *dp)
 	}
 
 	mutex_lock(&dp->session_lock);
-	if (rc && dp_display_state_is(DP_STATE_ENABLED))
+	if (dp_display_state_is(DP_STATE_ENABLED))
 		dp_display_clean(dp);
 
 	dp_display_host_unready(dp);
+#if defined(CONFIG_LGE_DUAL_SCREEN)
+	if (is_ds_connected() && !dp_display_state_is(DP_STATE_SRC_PWRDN)) {
+		dp_display_host_deinit(dp);
+		dp_display_state_add(DP_STATE_SRC_PWRDN);
+	}
+#endif
 
 	mutex_unlock(&dp->session_lock);
 
@@ -1377,6 +1393,9 @@ static void dp_display_disconnect_sync(struct dp_display_private *dp)
 
 	dp->ctrl->abort(dp->ctrl, true);
 	dp->aux->abort(dp->aux, true);
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+	dp->ctrl->lt_failure = false;
+#endif
 
 	/* wait for idle state */
 	cancel_work_sync(&dp->connect_work);
@@ -1596,13 +1615,26 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 	}
 #endif
 
-	DP_DEBUG("hpd_irq:%d, hpd_high:%d, power_on:%d, is_connected:%d\n",
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+	dp_display_host_init(dp);
+	dp_display_state_remove(DP_STATE_SRC_PWRDN);
+#endif
+	DP_INFO("hpd_irq:%d, hpd_high:%d, power_on:%d, is_connected:%d\n",
 			dp->hpd->hpd_irq, dp->hpd->hpd_high,
 			!!dp_display_state_is(DP_STATE_ENABLED),
 			!!dp_display_state_is(DP_STATE_CONNECTED));
 	SDE_EVT32_EXTERNAL(dp->state, dp->hpd->hpd_irq, dp->hpd->hpd_high,
 			!!dp_display_state_is(DP_STATE_ENABLED),
 			!!dp_display_state_is(DP_STATE_CONNECTED));
+
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+	if (dp->ctrl->lt_failure) {
+		pr_err("lt_failure host deninit\n");
+		dp_display_host_deinit(dp);
+		dp_display_state_add(DP_STATE_SRC_PWRDN);
+		return -ENOTCONN;
+	}
+#endif
 
 	if (!dp->hpd->hpd_high) {
 		dp_display_disconnect_sync(dp);
@@ -1969,6 +2001,7 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	struct dp_panel *dp_panel;
 	int rc = 0;
 
+	DP_INFO("[Enter]\n");
 	if (!dp_display || !panel) {
 		DP_ERR("invalid input\n");
 		return -EINVAL;
@@ -1981,6 +2014,18 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
+
+#if defined(CONFIG_LGE_DUAL_SCREEN)
+	if (is_ds_connected()) {
+		if ((dp->aux->state & DP_STATE_TRAIN_1_SUCCEEDED) &&
+				(dp->aux->state & DP_STATE_TRAIN_2_SUCCEEDED)) {
+			DP_INFO("LINK_TRAIN_1 / LINK_TRAIN_2 succeeded\n");
+		} else {
+			DP_ERR("%s failed, aux state: %d\n", __func__, dp->aux->state);
+			return -EINVAL;
+		}
+	}
+#endif
 
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
@@ -2046,6 +2091,7 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	if (rc)
 		goto end;
 
+	DP_INFO("[OK]\n");
 end:
 	mutex_unlock(&dp->session_lock);
 
@@ -2217,10 +2263,6 @@ static int dp_display_post_enable(struct dp_display *dp_display, void *panel)
 
 	cancel_delayed_work_sync(&dp->hdcp_cb_work);
 	queue_delayed_work(dp->wq, &dp->hdcp_cb_work, HZ);
-
-#ifdef CONFIG_LGE_DISPLAY_COMMON
-	DP_ERR("dp post enable - audio_supported %d\n",dp_panel->audio_supported);
-#endif
 
 	if (dp_panel->audio_supported) {
 		dp_panel->audio->bw_code = dp->link->link_params.bw_code;
@@ -2413,6 +2455,7 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	struct dp_panel *dp_panel = panel;
 	u32 flags = 0;
 
+	DP_INFO("[Enter]\n");
 	if (!dp_display || !panel) {
 		DP_ERR("invalid input\n");
 		return -EINVAL;
@@ -2720,13 +2763,11 @@ static void dp_display_convert_to_dp_mode(struct dp_display *dp_display,
 	if (free_dsc_blks >= required_dsc_blks)
 		dp_mode->capabilities |= DP_PANEL_CAPS_DSC;
 
-#if !defined(CONFIG_LGE_DISPLAY_COMMON)
 	if (dp_mode->capabilities & DP_PANEL_CAPS_DSC)
 		DP_DEBUG("in_use:%d, max:%d, free:%d, req:%d, caps:0x%x, width:%d\n",
 			dp->tot_dsc_blks_in_use, dp->parser->max_dp_dsc_blks,
 			free_dsc_blks, required_dsc_blks, dp_mode->capabilities,
 			dp->parser->max_dp_dsc_input_width_pixs);
-#endif
 
 	dp_panel->convert_to_dp_mode(dp_panel, drm_mode, dp_mode);
 }
@@ -2870,13 +2911,15 @@ static int dp_display_init_aux_switch(struct dp_display_private *dp)
 	nb.notifier_call = dp_display_fsa4480_callback;
 	nb.priority = 0;
 
+#if !defined(CONFIG_LGE_DISPLAY_COMMON)
 	rc = fsa4480_reg_notifier(&nb, dp->aux_switch_node);
 	if (rc) {
 		DP_ERR("failed to register notifier (%d)\n", rc);
-		goto end;
+		return 0;
 	}
 
 	fsa4480_unreg_notifier(&nb, dp->aux_switch_node);
+#endif
 end:
 	return rc;
 }
@@ -3460,7 +3503,7 @@ bool is_dd_powermode()
 {
 	struct dp_display* dp_display;
 	struct dp_display_private *dp;
-	bool ret;
+	bool ret = false;
 
 	dp_display = g_dp_display;
 
@@ -3469,7 +3512,7 @@ bool is_dd_powermode()
 		pr_err("DD not init. yet\n");
 		ret = false;
 	} else {
-		ret = dp_display_state_is(DP_STATE_ENABLED);
+		ret = !!dp_display_state_is(DP_STATE_ENABLED);
 	}
 	return ret;
 }
@@ -3633,11 +3676,6 @@ int dp_display_send_id_event(struct lge_dp_display *lge_dp)
 	if (!dev) {
 		pr_err("dev not set\n");
 		return -EINVAL;
-	}
-
-	if (IS_ERR_OR_NULL(dp->wq)) {
-		DP_ERR("dp is not ready\n");
-		return -EPERM;
 	}
 
 	snprintf(id, HPD_STRING_SIZE, "vidpid_=%08u", lge_dp->vid_pid);

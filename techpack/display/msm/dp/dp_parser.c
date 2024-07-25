@@ -795,6 +795,20 @@ static void lge_dp_parser_dp_use(struct dp_parser *parser)
 
 	pr_debug("lge,dp-use parsing successful. dp-use:%d\n",
 			parser->lge_dp_use);
+
+	parser->lge_dp_sel_inverse = of_property_read_bool(dev->of_node,
+			"lge,dp-sel_inverse");
+
+	pr_debug("lge,dp-use parsing successful. lge_dp_sel_inverse:%d\n",
+			parser->lge_dp_sel_inverse);
+
+#ifdef CONFIG_LGE_DUAL_SCREEN
+	parser->lge_dp_aux_sel_inverse = of_property_read_bool(dev->of_node,
+			"lge,dp-aux_sel_inverse");
+
+	pr_info("lge,dp-aux_sel_inverse parsing successful. lge_dp_aux_sel_inverse:%d\n",
+			parser->lge_dp_aux_sel_inverse);
+#endif
 }
 #endif
 

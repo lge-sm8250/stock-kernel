@@ -396,19 +396,8 @@ int mmc_add_card(struct mmc_card *card)
 	device_enable_async_suspend(&card->dev);
 
 	ret = device_add(&card->dev);
-#ifdef CONFIG_LFS_MMC
-	/* Adding Print for more information.
-	 */
-	if (ret) {
-		printk(KERN_INFO "[LGE][MMC][%-18s( )] device_add & uevent posting fail!, ret:%d \n", __func__, ret);
-		return ret;
-	} else {
-		printk(KERN_INFO "[LGE][MMC][%-18s( )] device_add & uevent posting complete!\n", __func__);
-	}
-#else
 	if (ret)
 		return ret;
-#endif
 
 	mmc_card_set_present(card);
 

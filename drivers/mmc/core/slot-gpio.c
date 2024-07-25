@@ -68,21 +68,21 @@ static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 	/* LGE_CHANGE, BSP-FS
 	 * Insertion log of slot detection
 	*/
-	if(mmc_card_is_removable(host))
+	if (mmc_card_is_removable(host))
 		is_damaged_sd = 0;
 
 	pr_info("[LGE][MMC] %s: slot status change detected(%s), GPIO_ACTIVE_%s\n",
-		mmc_hostname(host), present ?
+		mmc_hostname(host), mmc_gpio_get_cd(host) ?
 		"INSERTED" : "EJECTED",
 		(host->caps2 & MMC_CAP2_CD_ACTIVE_HIGH) ?
 		"HIGH" : "LOW");
-#endif
 
-#ifdef CONFIG_LFS_MMC
-	pr_info("[LGE][MMC] %s: present = %d old_gpio = %d \n", mmc_hostname(host), present, old_gpio);
-	if(old_gpio == present)
+	if (old_gpio == mmc_gpio_get_cd(host)) {
+		pr_info("[LGE][MMC] %s: new gpio is equal to old gpio. so, skip mmc_detect_change. new_gpio = %d old_gpio = %d \n",
+				mmc_hostname(host), mmc_gpio_get_cd(host), old_gpio);
 		return IRQ_HANDLED;
-	old_gpio = present;
+	}
+	old_gpio = mmc_gpio_get_cd(host);
 #endif
 
 	mmc_detect_change(host, msecs_to_jiffies(ctx->cd_debounce_delay_ms));
@@ -259,31 +259,29 @@ static int mmc_card_detect_notifier(struct notifier_block *nb,
 	struct mmc_host *host = container_of(nb, struct mmc_host,
 					     card_detect_nb);
 
-#ifdef CONFIG_LFS_MMC
-	int present = host->ops->get_cd(host);
-#endif
-
 	host->trigger_card_event = true;
 
 #ifdef CONFIG_LFS_MMC
 	/* LGE_CHANGE, BSP-FS
 	 * Insertion log of slot detection
 	*/
-	if(mmc_card_is_removable(host))
+	if (mmc_card_is_removable(host))
 		is_damaged_sd = 0;
 
 	pr_info("[LGE][MMC] %s: mmc_card_detect_notifier(%s), GPIO_ACTIVE_%s\n",
-		mmc_hostname(host), present ?
+		mmc_hostname(host), mmc_gpio_get_cd(host) ?
 		"INSERTED" : "EJECTED",
 		(host->caps2 & MMC_CAP2_CD_ACTIVE_HIGH) ?
 		"HIGH" : "LOW");
 #endif
 
 #ifdef CONFIG_LFS_MMC
-	pr_info("[LGE][MMC] %s: mmc_gpio_get_cd = %d old_gpio = %d \n", mmc_hostname(host), present, old_gpio);
-	if(old_gpio == present)
+	if (old_gpio == mmc_gpio_get_cd(host)) {
+		pr_info("[LGE][MMC] %s: new gpio is equal to old gpio. so, skip mmc_detect_change. new_gpio = %d old_gpio = %d \n",
+				mmc_hostname(host), mmc_gpio_get_cd(host), old_gpio);
 		return NOTIFY_DONE;
-	old_gpio = present;
+	}
+	old_gpio = mmc_gpio_get_cd(host);
 #endif
 
 	mmc_detect_change(host, 0);
@@ -359,7 +357,6 @@ int mmc_gpio_set_cd_wake(struct mmc_host *host, bool on)
 	return ret;
 }
 EXPORT_SYMBOL(mmc_gpio_set_cd_wake);
-
 
 /* Register an alternate interrupt service routine for
  * the card-detect GPIO.

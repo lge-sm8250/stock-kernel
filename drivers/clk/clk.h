@@ -25,7 +25,7 @@ int __clk_get(struct clk *clk);
 void __clk_put(struct clk *clk);
 
 /* Debugfs API to print the enabled clocks */
-#ifdef	CONFIG_LGE_PM_DEBUG
+#ifdef 	CONFIG_LGE_PM_DEBUG
 void clock_debug_print_enabled(bool print_parent);
 #else
 void clock_debug_print_enabled(void);

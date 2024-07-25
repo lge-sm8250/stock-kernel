@@ -87,6 +87,7 @@ int hallic_register(struct hallic_dev *hdev)
 
        dev_set_drvdata(hdev->dev, hdev);
        hdev->state = 0;
+
        return 0;
 
 err1:

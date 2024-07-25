@@ -14,38 +14,27 @@
  */
 #include <linux/types.h>
 #include <linux/fb.h>
-#if defined CONFIG_ARCH_MSM8996
-#include <linux/i2c/atmel_mxt_ts.h>
-#elif defined CONFIG_ARCH_MSM8998
-#include <linux/platform_data/atmel_mxt_ts.h>
-#else
-# error "TUI-HAL to be implemented."
-#endif
 #include <linux/device.h>
 #include <linux/input.h>
 #include <linux/kthread.h>
-#include <linux/input/synaptics_dsx_v2.h>
+#include <linux/delay.h>
+
+#define SECURE_INPUT
+#ifdef SECURE_INPUT
+#include <linux/input/tui_hal_ts.h>
+#endif
+
 #include <linux/ion.h>
 #include <linux/msm_ion.h>
 #include <linux/dma-buf.h>
 #include <linux/clk.h>
 #include <linux/version.h>
 
-/* We need to include this file to use two functions :
- * qseecom_dmabuf_map
- * qseecom_dmabuf_unmap
- * In the implementation of this two functions we need to export symbols and
- * add theirs prototypes into qseecom_kernel.h.
- * Please contact Trustonic to get patch example.
- */
-#if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
-#include <qseecom_kernel.h>
-#endif
-
 #include "dciTui.h"
 #include "tui-hal.h"
 #include "tlcTui.h"
 #include "mobicore_driver_api.h"
+#include "qseecom_kernel.h"
 
 u32 width;
 u32 height;
@@ -59,14 +48,51 @@ struct clk *core_clk;
 struct clk *iface_clk;
 
 struct task_struct *irq_fwd_thread;
-#if defined CONFIG_ARCH_MSM8996
+
+#ifdef SECURE_INPUT_TT
 static char *touchscreen_path =
-	"/devices/soc/75ba000.i2c/i2c-12/12-0020/input/input3";
-#elif defined CONFIG_ARCH_MSM8998
-static char *touchscreen_path =
-	"/devices/soc/c179000.i2c/i2c-5/5-0020/input/input3";
-#else
-# error "TUI-HAL to be implemented."
+	"/devices/soc/75ba000.i2c/i2c-12/12-0020/input/input2";
+#endif
+
+#ifdef SECURE_INPUT
+static struct tui_hal_ts_context {
+	struct device *dev;
+	atomic_t *st_enabled;
+	struct completion *st_irq_received;
+	int (*secure_get_irq)(struct device *dev);
+	ssize_t (*tui_sysfs_ctl)(struct device *dev,
+						const char *buf, size_t count);
+} ts_ctx;
+
+atomic_t tui_cancel_event_procession;
+
+int register_tui_hal_ts(struct device *dev,
+			atomic_t *st_enabled,
+			struct completion *st_irq_received,
+			int (*secure_get_irq)(struct device *dev))
+{
+	if (!ts_ctx.dev) {
+		ts_ctx.dev = dev;
+		ts_ctx.st_enabled = st_enabled;
+		ts_ctx.st_irq_received = st_irq_received;
+		ts_ctx.secure_get_irq = secure_get_irq;
+		return 0;
+	}
+
+	pr_err("already registered in %s\n", __func__);
+	return -1;
+}
+
+int register_tui_hal_sysfs(ssize_t (*tui_sysfs_ctl)(struct device *dev,
+            const char *buf, size_t count)) {
+    if (!ts_ctx.dev) {
+        ts_ctx.tui_sysfs_ctl = tui_sysfs_ctl;
+        return 0;
+    }
+	pr_err("already registered in %s\n", __func__);
+	return -1;
+}
+
 #endif
 DECLARE_COMPLETION(swd_completed);
 
@@ -376,6 +402,7 @@ void hal_tui_free(void)
 	num_of_buff = 0;
 }
 
+#ifdef SECURE_INPUT_TT
 static int is_synaptics(struct device *dev, const void *data)
 {
 	/* this function implements the comparison logic. Return not zero if
@@ -416,8 +443,6 @@ static struct device *find_synaptic_driver(void)
 	return dev;
 }
 
-#if defined CONFIG_ARCH_MSM8996
-
 static void synaptics_clk_control(struct device *dev, bool enable)
 {
 	int ret = -1;
@@ -452,8 +477,9 @@ static void synaptics_clk_control(struct device *dev, bool enable)
 err_iface_clk:
 	clk_put(core_clk);
 }
-#endif /* CONFIG_ARCH_MSM8996 */
+#endif // #ifdef SECURE_INPUT_TT
 
+#if defined(SECURE_INPUT_TT) || defined(SECURE_INPUT)
 static bool notify_touch_event(void)
 {
 	enum mc_result result;
@@ -473,7 +499,9 @@ static bool notify_touch_event(void)
 
 	return true;
 }
+#endif
 
+#ifdef SECURE_INPUT_TT
 int forward_irq_thread_fn(void *data)
 {
 	struct synaptics_rmi4_data *rmi4_data =
@@ -524,6 +552,61 @@ int forward_irq_thread_fn(void *data)
 		}
 	}
 }
+#endif
+
+#ifdef SECURE_INPUT
+int forward_irq_thread_fn(void *data)
+{
+	atomic_set(&tui_cancel_event_procession, 0);
+
+	pr_info("from irq kthread secure touch IRQ\n");
+	while (1) {
+		pr_info("NWd waiting for TUI event\n");
+		/* wait for the touchscreen driver to notify a touch event */
+		wait_for_completion(ts_ctx.st_irq_received);
+
+		if (atomic_read(ts_ctx.st_enabled) == 0) {
+			pr_info("exit due to secure_touch is disabled\n");
+			atomic_set(&tui_cancel_event_procession, 0);
+			do_exit(0);
+		}
+
+		int i;
+		/* TODO wait condition here should be 1==fts_secure_get_irq() */
+		while ((i = ts_ctx.secure_get_irq(ts_ctx.dev))) {
+			pr_info("NWd got an event to fwd to Swd\n");
+
+			if (i < 0) {
+				pr_err("secure_get_irq returned %d\n", i);
+				if (-EBADF == i) {
+					atomic_set(&tui_cancel_event_procession, 0);
+					do_exit(0);
+				}
+				else if (-EINVAL == i) {
+					tlc_notify_event(1);
+				}
+				break;
+			}
+
+			if (atomic_read(&tui_cancel_event_procession) == 0) {
+				pr_info("NWd: i is %d\n", i);
+				/* forward the notification to the SWd and wait for the
+				* answer
+				*/
+				reinit_completion(&swd_completed);
+				dci->hal_rsp = 0;
+				notify_touch_event();
+				while (!dci->hal_rsp && atomic_read(ts_ctx.st_enabled))
+					wait_for_completion(&swd_completed);
+				pr_info("NWd: event has been handled by the SWd\n");
+			}
+			else {
+				pr_info("NWd: tui_cancel_event_procession = true\n");
+			}
+		}
+	}
+}
+#endif
 
 /**
  * hal_tui_deactivate() - deactivate Normal World display and input
@@ -536,6 +619,7 @@ int forward_irq_thread_fn(void *data)
  */
 u32 hal_tui_deactivate(void)
 {
+#ifdef SECURE_INPUT_TT
 	struct device *dev;
 
 	dev = find_synaptic_driver();
@@ -557,14 +641,27 @@ u32 hal_tui_deactivate(void)
 		put_device(dev);
 		return TUI_DCI_ERR_UNKNOWN_CMD;
 	}
-#if defined CONFIG_ARCH_MSM8996
+
 	/*
 	 * Take a reference on the clocks to prevent the i2c bus from
 	 * being clock gated
 	 */
 	synaptics_clk_control(dev, true);
-#endif /* CONFIG_ARCH_MSM8996 */
+#endif
 
+#ifdef SECURE_INPUT
+	pr_debug("%s\n", __func__);
+	ts_ctx.tui_sysfs_ctl(ts_ctx.dev, "1", strlen("1")+1);
+
+	/* run the irq forwarder thread */
+	irq_fwd_thread = kthread_run(forward_irq_thread_fn,
+				     dev_get_drvdata(ts_ctx.dev),
+				     "tsp_interrupt_forwarder");
+	if (!irq_fwd_thread) {
+		pr_err("Unable to start Trusted UI forwarder thread\n");
+		return TUI_DCI_ERR_UNKNOWN_CMD;
+	}
+#endif
 	return TUI_DCI_OK;
 }
 
@@ -580,6 +677,7 @@ u32 hal_tui_deactivate(void)
  */
 u32 hal_tui_activate(void)
 {
+#ifdef SECURE_INPUT_TT
 	struct device *dev = find_synaptic_driver();
 
 	if (dev) {
@@ -597,7 +695,20 @@ u32 hal_tui_activate(void)
 		 */
 		complete(&swd_completed);
 	}
+#endif
 
+#ifdef SECURE_INPUT
+	msleep(300);
+	/* Disable touchscreen secure mode */
+	ts_ctx.tui_sysfs_ctl(ts_ctx.dev, "0", strlen("0")+1);
+	pr_debug("%s\n", __func__);
+	/* No need to kill the kernel thread.  The kernel thread is
+	 * responsible for killing itself when secure touch is disabled.
+	 * We must complete the completion `swd_completed`, the thread
+	 * will detect that the secure touch is nolonger enabled.
+	 */
+	complete(&swd_completed);
+#endif
 	return TUI_DCI_OK;
 }
 
@@ -687,7 +798,9 @@ u32 hal_tui_process_cmd(struct tui_hal_cmd_t *cmd, struct tui_hal_rsp_t *rsp)
 		break;
 
 		case CMD_TUI_HAL_CLEAR_TOUCH_INTERRUPT:
+#ifdef SECURE_INPUT
 			complete(&swd_completed);
+#endif
 			pr_info("INFO %s:%d\n", __func__, __LINE__);
 			break;
 
@@ -702,7 +815,7 @@ u32 hal_tui_process_cmd(struct tui_hal_cmd_t *cmd, struct tui_hal_rsp_t *rsp)
 			break;
 
 		case CMD_TUI_HAL_HIDE_SURFACE:
-			send_cmd_to_user(TLC_TUI_CMD_HIDE_SURFACE,
+			ret = send_cmd_to_user(TLC_TUI_CMD_HIDE_SURFACE,
 					 0,
 					 0);
 			break;

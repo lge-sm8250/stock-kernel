@@ -1,24 +1,32 @@
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
 # Per Platform
-ifeq ($(CONFIG_MACH_KONA_TIMELM),y)
-DTS_PROJECT := kona-timelm
-endif
-
-ifeq ($(CONFIG_MACH_KONA_TIMELM_LAO_LDU),y)
-DTS_TARGET := kona-timelm_lao_ldu
+ifeq ($(CONFIG_MACH_LITO_CAYMANLM),y)
+DTS_PROJECT := lito-caymanlm
 endif
 
 # Per Device
-ifeq ($(CONFIG_MACH_KONA_TIMELM_LAO_COM),y)
-DTS_TARGET := kona-timelm_lao_com
+ifeq ($(CONFIG_MACH_LITO_CAYMANLM_LAO_COM),y)
+DTS_TARGET := lito-caymanlm_lao_com
 endif
 
-ifeq ($(CONFIG_MACH_KONA_TIMELM_DCM_JP),y)
-DTS_TARGET := kona-timelm_dcm_jp
+# Per Device
+ifeq ($(CONFIG_MACH_LITO_CAYMANLM_DCM_JP),y)
+DTS_TARGET := lito-caymanlm_dcm_jp
 endif
 
-ifeq ($(CONFIG_MACH_KONA_TIMELM_SB_JP),y)
-DTS_TARGET := kona-timelm_sb_jp
+# Per Device
+ifeq ($(CONFIG_MACH_LITO_CAYMANLM_SB_JP),y)
+DTS_TARGET := lito-caymanlm_sb_jp
+endif
+
+# Per Platform
+ifeq ($(CONFIG_MACH_LITO_WINGLM),y)
+DTS_PROJECT := lito-winglm
+endif
+
+# Per Device
+ifeq ($(CONFIG_MACH_LITO_WINGLM_LAO_COM),y)
+DTS_TARGET := lito-winglm_lao_com
 endif
 
 ALL_DTS := $(notdir $(wildcard echo $(srctree)/$(src)/$(DTS_PROJECT)/$(DTS_TARGET)/*.dts))

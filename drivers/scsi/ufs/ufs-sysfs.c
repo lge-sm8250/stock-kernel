@@ -776,12 +776,6 @@ static const struct attribute_group ufs_sysfs_attributes_group = {
 	.attrs = ufs_sysfs_attributes,
 };
 
-#ifdef CONFIG_LFS_UFSDBG_TUNABLES
-#define IMPORT_TO_UFS_SYSFS
-#include "ufsdbg-tunables.c"
-#undef IMPORT_TO_UFS_SYSFS
-#endif
-
 static const struct attribute_group *ufs_sysfs_groups[] = {
 	&ufs_sysfs_default_group,
 	&ufs_sysfs_device_descriptor_group,
@@ -792,9 +786,6 @@ static const struct attribute_group *ufs_sysfs_groups[] = {
 	&ufs_sysfs_string_descriptors_group,
 	&ufs_sysfs_flags_group,
 	&ufs_sysfs_attributes_group,
-#ifdef CONFIG_LFS_UFSDBG_TUNABLES
-	&ufs_sysfs_tunables_group,
-#endif
 	NULL,
 };
 

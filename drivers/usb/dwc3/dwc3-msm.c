@@ -1957,6 +1957,10 @@ static void dwc3_msm_vbus_draw_work(struct work_struct *w)
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
 
 	dwc3_msm_gadget_vbus_draw(mdwc, dwc->vbus_draw);
+#ifdef CONFIG_LGE_USB
+	if (dwc->gadget.state >= USB_STATE_CONFIGURED)
+		cancel_delayed_work_sync(&mdwc->sdp_check);
+#endif
 }
 
 static void dwc3_gsi_event_buf_alloc(struct dwc3 *dwc)
@@ -2491,9 +2495,7 @@ static int dwc3_msm_update_bus_bw(struct dwc3_msm *mdwc, enum bus_vote bv)
 		return 0;
 
 #ifdef CONFIG_LGE_USB
-	if (dwc->usb_compliance_mode &&
-	    *dwc->usb_compliance_mode &&
-	    (mdwc->hs_phy->flags & PHY_HOST_MODE))
+	if (mdwc->usb_compliance_mode && (mdwc->hs_phy->flags & PHY_HOST_MODE))
 		return 0;
 #endif
 
@@ -3369,6 +3371,19 @@ static void check_for_sdp_connection(struct work_struct *w)
 	if (mdwc->usb_compliance_mode)
 		return;
 
+#ifdef CONFIG_LGE_USB
+	/*
+	 * XXX:
+	 * Set USB current to 500mA according to LG Spec.
+	 */
+	if (get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB) {
+		if (dwc->gadget.state < USB_STATE_CONFIGURED) {
+			dwc3_msm_gadget_vbus_draw(mdwc, 500);
+			return;
+		}
+	}
+#endif
+
 	/* floating D+/D- lines detected */
 	if (dwc->gadget.state < USB_STATE_DEFAULT &&
 		dwc3_gadget_get_link_state(dwc) != DWC3_LINK_STATE_CMPLY) {
@@ -3631,9 +3646,6 @@ static ssize_t usb_compliance_mode_store(struct device *dev,
 {
 	int ret = 0;
 	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
-#ifdef CONFIG_LGE_USB
-	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
-#endif
 
 	ret = strtobool(buf, &mdwc->usb_compliance_mode);
 
@@ -3641,7 +3653,13 @@ static ssize_t usb_compliance_mode_store(struct device *dev,
 		return ret;
 
 #ifdef CONFIG_LGE_USB
-	*(dwc->usb_compliance_mode) = mdwc->usb_compliance_mode;
+	if (mdwc->usb_compliance_mode) {
+		mdwc->hs_phy->flags |= COMPLIANCE_MODE;
+		mdwc->ss_phy->flags |= COMPLIANCE_MODE;
+	} else {
+		mdwc->hs_phy->flags &= ~COMPLIANCE_MODE;
+		mdwc->ss_phy->flags &= ~COMPLIANCE_MODE;
+	}
 #endif
 
 	return count;
@@ -4043,6 +4061,10 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		goto put_dwc3;
 	}
 
+#ifdef CONFIG_LGE_USB
+	dwc->usb_compliance_mode = &mdwc->usb_compliance_mode;
+#endif
+
 	/*
 	 * On platforms with SS PHY that do not support ss_phy_irq for wakeup
 	 * events, use pwr_event_irq for wakeup events in superspeed mode.
@@ -4159,7 +4181,6 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	device_create_file(&pdev->dev, &dev_attr_bus_vote);
 #ifdef CONFIG_LGE_USB
 	device_create_file(&pdev->dev, &dev_attr_usb_controller);
-	dwc->usb_compliance_mode = &mdwc->usb_compliance_mode;
 #endif
 
 	return 0;
@@ -4693,6 +4714,9 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 		if ((mA > 25) && ((1000 * mA) < pval.intval))
 			return 0;
 
+		if ( mA == 0 )
+			return 0;
+
 		dev_info(mdwc->dev, "Avail curr from USB_PD = %u\n", mA);
 		pval.intval = 1000 * mA;
 		goto set_pd_prop;
@@ -4721,19 +4745,6 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 	pval.intval = 1000 * mA;
 
 set_prop:
-#ifdef CONFIG_LGE_USB
-	/*
-	 * XXX:
-	 * According to LG Spec, USB current is not set below 500mA.
-	 */
-	if (!(dwc->usb_compliance_mode &&
-	      *dwc->usb_compliance_mode) &&
-	    (pval.intval >= 0 && pval.intval < 500000)) {
-		dev_info(mdwc->dev, "Override avail curr from USB = 500\n");
-		pval.intval = 500000;
-	}
-#endif
-
 	dev_info(mdwc->dev, "Avail curr from USB = %u\n", mA);
 	ret = power_supply_set_property(mdwc->usb_psy,
 				POWER_SUPPLY_PROP_SDP_CURRENT_MAX, &pval);
@@ -4833,7 +4844,12 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			work = 1;
 		} else if (test_bit(B_SESS_VLD, &mdwc->inputs)) {
 			dev_dbg(mdwc->dev, "b_sess_vld\n");
+#ifdef CONFIG_LGE_USB
+			if (get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB ||
+			    get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB_FLOAT)
+#else
 			if (get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB_FLOAT)
+#endif
 				queue_delayed_work(mdwc->dwc3_wq,
 						&mdwc->sdp_check,
 				msecs_to_jiffies(SDP_CONNETION_CHECK_TIME));
@@ -4849,15 +4865,6 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			dwc3_otg_start_peripheral(mdwc, 1);
 			mdwc->drd_state = DRD_STATE_PERIPHERAL;
 			work = 1;
-#ifdef CONFIG_LGE_USB
-			/*
-			 * XXX:
-			 * Set USB current to 500mA according to LG Spec.
-			 */
-			if (!dwc->usb_compliance_mode ||
-			    !(*dwc->usb_compliance_mode))
-				dwc3_msm_gadget_vbus_draw(mdwc, 500);
-#endif
 		} else {
 			dwc3_msm_gadget_vbus_draw(mdwc, 0);
 			dev_dbg(mdwc->dev, "Cable disconnected\n");

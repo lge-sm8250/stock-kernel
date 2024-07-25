@@ -398,7 +398,6 @@ int sw42000_reg_write(struct device *dev, u16 addr, void *data, int size)
 static int sw42000_drm_notifier_callback(struct notifier_block *self,
 		unsigned long event, void *data)
 {
-#if 0
 	struct msm_drm_notifier *ev = (struct msm_drm_notifier *)data;
 
 	TOUCH_TRACE();
@@ -412,7 +411,6 @@ static int sw42000_drm_notifier_callback(struct notifier_block *self,
 			TOUCH_I("DRM_POWERDOWN\n");
 	}
 
-#endif
 	return 0;
 }
 #endif
@@ -3424,7 +3422,6 @@ static int sw42000_suspend(struct device *dev)
 	d->lcd_mode = LCD_MODE_U0;
 	TOUCH_I("Force LCD Mode setting : d->lcd_mode = %d\n", d->lcd_mode);
 #endif
-
 #elif defined(CONFIG_FB)
 #if defined(CONFIG_LGE_TOUCH_USE_PANEL_NOTIFY)
 #else
@@ -3484,7 +3481,6 @@ static int sw42000_resume(struct device *dev)
 	d->lcd_mode = LCD_MODE_U3;
 	TOUCH_I("Force LCD Mode setting : d->lcd_mode = %d\n", d->lcd_mode);
 #endif
-
 #elif defined(CONFIG_FB)
 #if defined(CONFIG_LGE_TOUCH_USE_PANEL_NOTIFY)
 #else
@@ -4495,6 +4491,27 @@ out:
 	return count;
 }
 
+static ssize_t show_gpio_pin(struct device *dev, char *buf)
+{
+	struct touch_core_data *ts = to_touch_core(dev);
+	int reset_pin = 0;
+	int int_pin = 0;
+	int ret = 0;
+
+	TOUCH_TRACE();
+
+	reset_pin = gpio_get_value(ts->reset_pin);
+	int_pin = gpio_get_value(ts->int_pin);
+
+	ret += snprintf(buf + ret, PAGE_SIZE - ret,
+			"reset_pin = %d , int_pin = %d\n",
+			reset_pin, int_pin);
+	TOUCH_I("%s: reset_pin = %d , int_pin = %d\n",
+			__func__, reset_pin, int_pin);
+
+	return ret;
+}
+
 static TOUCH_ATTR(lpwg_abs, show_lpwg_abs, store_lpwg_abs);
 static TOUCH_ATTR(reg_ctrl, NULL, store_reg_ctrl);
 static TOUCH_ATTR(lpwg_failreason, show_lpwg_failreason, store_lpwg_failreason);
@@ -4504,6 +4521,7 @@ static TOUCH_ATTR(grip_suppression, show_grip_suppression, store_grip_suppressio
 static TOUCH_ATTR(q_sensitivity, NULL, store_q_sensitivity);
 static TOUCH_ATTR(ai_pick, show_ai_pick, store_ai_pick);
 static TOUCH_ATTR(ts_noise_log_enable, show_noise_log, store_noise_log);
+static TOUCH_ATTR(pinstate, show_gpio_pin, NULL);
 
 static struct attribute *sw42000_attribute_list[] = {
 	&touch_attr_reg_ctrl.attr,
@@ -4515,6 +4533,7 @@ static struct attribute *sw42000_attribute_list[] = {
 	&touch_attr_q_sensitivity.attr,
 	&touch_attr_ai_pick.attr,
 	&touch_attr_ts_noise_log_enable.attr,
+	&touch_attr_pinstate.attr,
 	NULL,
 };
 
@@ -4667,6 +4686,8 @@ static struct touch_hwif hwif = {
 	.of_match_table = of_match_ptr(touch_match_ids),
 };
 
+extern bool panel_type_touch(char *panel_name);
+
 #if defined(CONFIG_LGE_TOUCH_MODULE_TEST)
 int touch_device_init(void)
 #else
@@ -4674,6 +4695,12 @@ static int __init touch_device_init(void)
 #endif
 {
 	TOUCH_TRACE();
+
+	if(!panel_type_touch("oled")) {
+		TOUCH_I("oled_type_touch not found\n");
+		return 0;
+	}
+
 #if 0
 	int maker = 0;
 
@@ -4708,7 +4735,7 @@ static void __exit touch_device_exit(void)
 }
 
 #if !defined(CONFIG_LGE_TOUCH_MODULE_TEST)
-module_init(touch_device_init);
+late_initcall(touch_device_init);
 module_exit(touch_device_exit);
 
 MODULE_AUTHOR("hoyeon.jang@lge.com");

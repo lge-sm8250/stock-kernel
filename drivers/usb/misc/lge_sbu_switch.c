@@ -55,6 +55,7 @@ struct lge_sbu_switch {
 	int				ovp;
 
 	bool				reverse_switch;
+	bool				reverse_uart_switch;
 
 	/* Flags */
 	atomic_t			flags[LGE_SBU_SWITCH_MODE_MAX];
@@ -206,6 +207,10 @@ static unsigned long update_state(struct lge_sbu_switch *lge_sbu_switch)
 	if (lge_sbu_switch->reverse_switch) {
 		if (sbu_oe == 0)
 			sbu_sel = !sbu_sel;
+	}
+
+	if (lge_sbu_switch->reverse_uart_switch) {
+			uart_sel = !uart_sel;
 	}
 
 	if(!lge_sbu_switch->sbu_oe_desc)
@@ -469,6 +474,8 @@ static int lge_sbu_switch_probe(struct platform_device *pdev)
 		lge_sbu_switch->sbu_sel = 1;
 	else
 		lge_sbu_switch->sbu_sel = 0;
+
+	lge_sbu_switch->reverse_uart_switch = of_property_read_bool(node, "lge,reverse-uart-sel-switch");
 
 	lge_sbu_switch->ldo_en_desc = devm_gpiod_get(dev, "lge,ldo-en",
 				  lge_sbu_switch->ldo_en ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW);

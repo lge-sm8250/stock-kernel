@@ -10,7 +10,9 @@ static struct filter {
 } filters [] = {
 	{ "POWER_SUPPLY_INPUT_CURRENT_NOW",	100000,		30 },
 	{ "POWER_SUPPLY_RESISTANCE_NOW",	11,		27 }, // bms       / RESISTANCE(mohm)
+#ifndef CONFIG_LGE_PM_CCD
 	{ "POWER_SUPPLY_CAPACITY_RAW",		255,		25 }, // bms       / msoc (0~255)
+#endif
 	{ "POWER_SUPPLY_VOLTAGE_OCV",		50000,		24 }, // bms       / OCV(uv)
 	{ "POWER_SUPPLY_CHARGE_COUNTER",	10000,		27 }, // batt, bms / Charging counter(uAh)
 	{ "POWER_SUPPLY_VOLTAGE_NOW",		50000,		24 }, // batt, usb / batt, input volt(uv)
@@ -21,6 +23,9 @@ static struct filter {
 	{ "POWER_SUPPLY_VOLTAGE_VPH",		10000,		24 }, // usb       / VPH(uV)
 	{ "POWER_SUPPLY_CP_DIE_TEMP",		10,		24 }, // CP        / temp(x)
 	{ "POWER_SUPPLY_CP_ISNS",		50000,		20 }, // CP        / ISNS(uV)
+#ifdef CONFIG_LGE_PM_CCD
+	{ "POWER_SUPPLY_FORCE_UPDATE",		1,		25 }, // force update       / toggle
+#endif
 };
 
 static struct score {

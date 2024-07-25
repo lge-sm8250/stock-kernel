@@ -1496,8 +1496,6 @@ static int cam_ife_csid_enable_hw(struct cam_ife_csid_hw  *csid_hw)
 	csid_hw->fatal_err_detected = false;
 	csid_hw->device_enabled = 1;
 	spin_unlock_irqrestore(&csid_hw->lock_state, flags);
-#else // Q OS ES3, Need to check
-	csid_hw->fatal_err_detected = false;
 #endif
 	cam_tasklet_start(csid_hw->tasklet);
 

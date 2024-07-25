@@ -777,6 +777,8 @@ static inline bool set_page_guard(struct zone *zone, struct page *page,
 	set_page_private(page, order);
 	/* Guard pages are not available for any usage */
 	__mod_zone_freepage_state(zone, -(1 << order), migratetype);
+	if (is_migrate_highatomic_page(page))
+		__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, -(1 << order));
 
 	return true;
 }
@@ -798,6 +800,8 @@ static inline void clear_page_guard(struct zone *zone, struct page *page,
 	set_page_private(page, 0);
 	if (!is_migrate_isolate(migratetype))
 		__mod_zone_freepage_state(zone, (1 << order), migratetype);
+	if (is_migrate_highatomic_page(page))
+		__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, (1 << order));
 }
 #else
 struct page_ext_operations debug_guardpage_ops;
@@ -954,6 +958,9 @@ static inline void __free_one_page(struct page *page,
 	VM_BUG_ON(migratetype == -1);
 	if (likely(!is_migrate_isolate(migratetype)))
 		__mod_zone_freepage_state(zone, 1 << order, migratetype);
+	if (is_migrate_highatomic(migratetype) ||
+		is_migrate_highatomic_page(page))
+		__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, 1 << order);
 
 	VM_BUG_ON_PAGE(pfn & ((1 << order) - 1), page);
 	VM_BUG_ON_PAGE(bad_range(zone, page), page);
@@ -1927,7 +1934,6 @@ void __init page_alloc_init_late(void)
 }
 
 #ifdef CONFIG_CMA
-
 bool is_cma_pageblock(struct page *page)
 {
 	return get_pageblock_migratetype(page) == MIGRATE_CMA;
@@ -2506,6 +2512,7 @@ static void reserve_highatomic_pageblock(struct page *page, struct zone *zone,
 {
 	int mt;
 	unsigned long max_managed, flags;
+	int ret;
 
 	/*
 	 * Limit the number reserved to 1 pageblock or roughly 1% of a zone.
@@ -2527,7 +2534,8 @@ static void reserve_highatomic_pageblock(struct page *page, struct zone *zone,
 	    && !is_migrate_cma(mt)) {
 		zone->nr_reserved_highatomic += pageblock_nr_pages;
 		set_pageblock_migratetype(page, MIGRATE_HIGHATOMIC);
-		move_freepages_block(zone, page, MIGRATE_HIGHATOMIC, NULL);
+		ret = move_freepages_block(zone, page, MIGRATE_HIGHATOMIC, NULL);
+		__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, ret);
 	}
 
 out_unlock:
@@ -2552,7 +2560,7 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 	struct zone *zone;
 	struct page *page;
 	int order;
-	bool ret;
+	int ret;
 
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, ac->high_zoneidx,
 								ac->nodemask) {
@@ -2607,6 +2615,7 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 			ret = move_freepages_block(zone, page, ac->migratetype,
 									NULL);
 			if (ret) {
+				__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, -(ret));
 				spin_unlock_irqrestore(&zone->lock, flags);
 				return ret;
 			}
@@ -2805,6 +2814,9 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 			__mod_zone_page_state(zone, NR_FREE_HIGHORDER_PAGES,
 							-(1 << order));
 #endif
+		if (is_migrate_highatomic_page(page)) {
+			__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, -(1 << order));
+		}
 	}
 
 	/*
@@ -3374,6 +3386,9 @@ struct page *rmqueue(struct zone *preferred_zone,
 	__mod_zone_freepage_state(zone, -(1 << order),
 				  get_pcppage_migratetype(page));
 
+	if (is_migrate_highatomic_page(page))
+		__mod_zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES, -(1 << order));
+
 	__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
 	zone_statistics(preferred_zone, zone);
 	local_irq_restore(flags);
@@ -3497,7 +3512,7 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 	 * atomic reserve but it avoids a search.
 	 */
 	if (likely(!alloc_harder)) {
-		free_pages -= z->nr_reserved_highatomic;
+		free_pages -= zone_page_state(z, NR_FREE_HIGHATOMIC_PAGES);
 	} else {
 		/*
 		 * OOM victims can try even harder than normal ALLOC_HARDER
@@ -3887,9 +3902,9 @@ void warn_alloc(gfp_t gfp_mask, nodemask_t *nodemask, const char *fmt, ...)
 	va_start(args, fmt);
 	vaf.fmt = fmt;
 	vaf.va = &args;
-	pr_warn("%s: %pV, mode:%#x(%pGg), nodemask=%*pbl\n",
+	pr_warn("%s: %pV, mode:%#x(%pGg), nodemask=%*pbl, fatalsigpend=%d\n",
 			current->comm, &vaf, gfp_mask, &gfp_mask,
-			nodemask_pr_args(nodemask));
+			nodemask_pr_args(nodemask), fatal_signal_pending(current));
 	va_end(args);
 
 	cpuset_print_current_mems_allowed();
@@ -5415,7 +5430,7 @@ void show_free_areas(unsigned int filter, nodemask_t *nodemask)
 		" unevictable:%lu dirty:%lu writeback:%lu unstable:%lu\n"
 		" slab_reclaimable:%lu slab_unreclaimable:%lu\n"
 		" mapped:%lu shmem:%lu pagetables:%lu bounce:%lu\n"
-		" free:%lu free_pcp:%lu free_cma:%lu\n"
+		" free:%lu free_pcp:%lu free_cma:%lu free_highatomic:%lu\n"
 #ifdef CONFIG_MIGRATE_HIGHORDER
 		" free_highorder:%lu\n"
 #endif
@@ -5438,7 +5453,8 @@ void show_free_areas(unsigned int filter, nodemask_t *nodemask)
 		global_zone_page_state(NR_BOUNCE),
 		global_zone_page_state(NR_FREE_PAGES),
 		free_pcp,
-		global_zone_page_state(NR_FREE_CMA_PAGES)
+		global_zone_page_state(NR_FREE_CMA_PAGES),
+		global_zone_page_state(NR_FREE_HIGHATOMIC_PAGES)
 #ifdef CONFIG_MIGRATE_HIGHORDER
 		,global_zone_page_state(NR_FREE_HIGHORDER_PAGES)
 #endif
@@ -5528,6 +5544,8 @@ void show_free_areas(unsigned int filter, nodemask_t *nodemask)
 			" free_pcp:%lukB"
 			" local_pcp:%ukB"
 			" free_cma:%lukB"
+			" nr_reserved_highatomic:%lukB"
+			" free_highatomic:%luKB"
 #ifdef CONFIG_MIGRATE_HIGHORDER
 			" free_highorder:%lukB"
 #endif
@@ -5554,7 +5572,9 @@ void show_free_areas(unsigned int filter, nodemask_t *nodemask)
 			K(zone_page_state(zone, NR_BOUNCE)),
 			K(free_pcp),
 			K(this_cpu_read(zone->pageset->pcp.count)),
-			K(zone_page_state(zone, NR_FREE_CMA_PAGES))
+			K(zone_page_state(zone, NR_FREE_CMA_PAGES)),
+			K(zone->nr_reserved_highatomic),
+			K(zone_page_state(zone, NR_FREE_HIGHATOMIC_PAGES))
 #ifdef CONFIG_MIGRATE_HIGHORDER
 			, K(zone_page_state(zone, NR_FREE_HIGHORDER_PAGES))
 #endif
@@ -6023,7 +6043,7 @@ static void setup_zone_migrate_highorder(struct zone *zone)
 	unsigned long block_migratetype;
 	int reserve;
 	unsigned long highorder_pages = 0;
-
+	unsigned long physpages;
 	/*
 	 * Get the start pfn, end pfn and the number of blocks to reserve
 	 * We have to be careful to be aligned to pageblock_nr_pages to
@@ -6033,9 +6053,12 @@ static void setup_zone_migrate_highorder(struct zone *zone)
 	start_pfn = zone->zone_start_pfn;
 	end_pfn = zone_end_pfn(zone);
 	start_pfn = roundup(start_pfn, pageblock_nr_pages);
-#ifdef CONFIG_HIGHORDER_PAGES
-	highorder_pages = CONFIG_HIGHORDER_PAGES;
-#endif
+	physpages = get_num_physpages();
+	if(physpages << (PAGE_SHIFT - 10) <= CONFIG_HIGHORDER_PAGES_THRESHOLD)
+		highorder_pages = CONFIG_HIGHORDER_PAGES_MID;
+	else
+		highorder_pages = CONFIG_HIGHORDER_PAGES_HIGH;
+	pr_info("set %lu highorder pages\n", highorder_pages);
 	/* Default if 0, set 10% of total memory */
 	if (highorder_pages == 0)
 		highorder_pages = zone->present_pages / 10;
@@ -7986,16 +8009,8 @@ static void __setup_per_zone_wmarks(void)
 		zone->watermark_boost = 0;
 		zone->_watermark[WMARK_LOW]  = min_wmark_pages(zone) +
 					low + min;
-
-        // [LGE_S] PostCS1 Migration >>  LGE HSWAP Fix: Changed From "min * 2" to "min_wmark_pages(zone) * 2"
 		zone->_watermark[WMARK_HIGH] = min_wmark_pages(zone) * 2 +
 					low + min;
-
-        /* Original QCT source
-		zone->_watermark[WMARK_HIGH] = min_wmark_pages(zone) +
-					low + min * 2;
-        */
-        // [LGE_E] PostCS1 Migration
 
 		spin_unlock_irqrestore(&zone->lock, flags);
 	}

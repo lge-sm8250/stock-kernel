@@ -311,7 +311,6 @@ static int32_t cam_actuator_driver_i2c_remove(struct i2c_client *client)
 		CAM_ERR(CAM_ACTUATOR, "Actuator device is NULL");
 		return -EINVAL;
 	}
-
 #ifdef CONFIG_MACH_LGE
 	actuator_destroy_sysfs(a_ctrl);
 #endif

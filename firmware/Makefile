@@ -13,7 +13,7 @@ fw-external-y := $(subst $(quote),,$(CONFIG_EXTRA_FIRMWARE))
 ifdef CONFIG_LGE_TOUCH_FW_PATH
 fwpath := $(subst ",,$(CONFIG_LGE_TOUCH_FW_PATH))
 ifdef CONFIG_LGE_TOUCH_MODULE_DETECT
-lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*/*)
+lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*/*/*)
 else
 lge_touch_image_files := $(wildcard $(srctree)/firmware/$(fwpath)/*)
 endif
@@ -21,8 +21,10 @@ lge_touch_firmware := $(subst $(srctree)/firmware/,,$(lge_touch_image_files))
 fw-shipped-$(CONFIG_LGE_TOUCH_CORE_BASE) += $(lge_touch_firmware)
 endif
 
+fw-shipped-$(CONFIG_LGE_USB_LATTICE_SLS11HC) += lattice/u11hc_spi_lge_des_impl_1.bin
 fw-shipped-$(CONFIG_SAR_ALMF04_C2_C3_12QFN) += almf04/ALMF04_Sar2CNew_V2.04T.fw
-
+fw-shipped-$(CONFIG_SAR_ALMF04QFN_2_3CH_NIT) += almf04/ALMF04_Sar3CH_NIT_V3.11T.fw
+fw-shipped-$(CONFIG_SAR_2nd_ALMF04QFN_2_3CH_NIT) += almf04/ALMF04_Sar3CH_NIT_V3.11T.fw
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 
 # Directories which we _might_ need to create, so we have a rule for them.

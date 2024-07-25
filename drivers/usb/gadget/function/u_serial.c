@@ -551,21 +551,9 @@ static int gs_start_io(struct gs_port *port)
 	struct usb_function	*f = &port->port_usb->func;
 	struct usb_composite_dev *cdev = f->config->cdev;
 	struct list_head	*head = &port->read_pool;
-#ifdef CONFIG_LGE_USB_GADGET
-	struct usb_ep		*ep;
-#else
 	struct usb_ep		*ep = port->port_usb->out;
-#endif
 	int			status;
 	unsigned		started;
-
-#ifdef CONFIG_LGE_USB_GADGET
-	if (!port->port_usb) {
-		pr_debug("%s: port_usb is NULL\n", __func__);
-		return -ENODEV;
-	}
-	ep = port->port_usb->out;
-#endif
 
 	/* Allocate RX and TX I/O buffers.  We can't easily do this much
 	 * earlier (with GFP_KERNEL) because the requests are coupled to
@@ -590,14 +578,6 @@ static int gs_start_io(struct gs_port *port)
 	port->n_read = 0;
 	started = gs_start_rx(port);
 
-#ifdef CONFIG_LGE_USB_GADGET
-	if (!port->port_usb) {
-		pr_err("%s: port_usb is NULL!\n", __func__);
-		return -ENODEV;
-	}
-#endif
-
-	/* unblock any pending writes into our circular buffer */
 #ifdef CONFIG_LGE_USB_GADGET
 	if (started && port->port.tty) {
 #else

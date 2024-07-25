@@ -10,6 +10,9 @@
 #include <linux/freezer.h>
 #include <asm/errno.h>
 
+#ifdef CONFIG_LGE_PM
+extern bool suspend_debug_irq_pin(void);
+#endif
 #ifdef CONFIG_VT
 extern void pm_set_vt_switch(int);
 #else
@@ -273,10 +276,6 @@ extern void arch_suspend_disable_irqs(void);
  * done. Not called for suspend to disk.
  */
 extern void arch_suspend_enable_irqs(void);
-
-#ifdef CONFIG_LGE_PM
-extern bool suspend_debug_irq_pin(void);
-#endif
 
 extern int pm_suspend(suspend_state_t state);
 #else /* !CONFIG_SUSPEND */

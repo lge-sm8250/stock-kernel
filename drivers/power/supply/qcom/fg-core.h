@@ -113,9 +113,10 @@ enum fg_debug_flag {
 	FG_BUS_READ		= BIT(6), /* Show REGMAP reads */
 	FG_CAP_LEARN		= BIT(7), /* Show capacity learning */
 	FG_TTF			= BIT(8), /* Show time to full */
-	FG_FVSS			= BIT(9), /* Show FVSS */
 #ifdef CONFIG_LGE_PM
-	FG_LGE			= BIT(10),
+	FG_LGE			= BIT(9),
+#else
+	FG_FVSS                 = BIT(9), /* Show FVSS */
 #endif
 };
 

@@ -40,10 +40,6 @@
 
 #include "peripheral-loader.h"
 
-//#ifdef LGP_MODEMBSP_MFG_PIF_DETECT : Force enable SSR on chargerlogo
-#include <soc/qcom/lge/board_lge.h>
-//#endif
-
 #define DISABLE_SSR 0x9889deed
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
 static uint disable_restart_work;
@@ -1246,16 +1242,14 @@ static void device_restart_work_hdlr(struct work_struct *work)
 	msleep(100);
 
 #ifdef CONFIG_LGE_HANDLE_PANIC
-	preempt_disable();
-	if(strstr(dev->desc->name,"modem") && qct_wcnss_crash ){
-		lge_set_subsys_crash_reason("wcnss", LGE_ERR_SUB_RST);
-		panic("subsys-restart: Resetting the SoC - %s crashed.","wcnss");
-	}
-	else{
-		lge_set_subsys_crash_reason(dev->desc->name, LGE_ERR_SUB_RST);
-		panic("subsys-restart: Resetting the SoC - %s crashed.",dev->desc->name);
-	}
-	preempt_enable();
+		if(strstr(dev->desc->name,"modem") && qct_wcnss_crash ){
+			lge_set_subsys_crash_reason("wcnss", LGE_ERR_SUB_RST);
+			panic("subsys-restart: Resetting the SoC - %s crashed.","wcnss");
+		}
+		else{
+			lge_set_subsys_crash_reason(dev->desc->name, LGE_ERR_SUB_RST);
+			panic("subsys-restart: Resetting the SoC - %s crashed.",dev->desc->name);
+		}
 #else
 	panic("subsys-restart: Resetting the SoC - %s crashed.",
 							dev->desc->name);
@@ -1297,13 +1291,6 @@ int subsystem_restart_dev(struct subsys_device *dev)
 									name);
 		return 0;
 	}
-
-	//#define LGP_MODEMBSP_MFG_PIF_DETECT : Force enable SSR on chargerlogo
-	if (lge_get_boot_mode() == LGE_BOOT_MODE_CHARGERLOGO) {
-		pr_err("Force SSR enable in case of chargerlogo boot.\n");
-		dev->restart_level = RESET_SUBSYS_COUPLED;
-	}
-	//#endif
 
 	switch (dev->restart_level) {
 

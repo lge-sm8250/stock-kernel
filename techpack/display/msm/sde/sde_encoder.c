@@ -41,7 +41,7 @@
 #include "sde_hw_top.h"
 #include "sde_hw_qdss.h"
 
-#ifdef CONFIG_LGE_PM_PRM
+#if IS_ENABLED(CONFIG_LGE_PM_PRM)
 #include "vfps/lge_vfps.h"
 #endif
 
@@ -3731,17 +3731,25 @@ static void sde_encoder_vblank_callback(struct drm_encoder *drm_enc,
 	if (sde_enc->crtc_vblank_cb)
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON) && IS_ENABLED(CONFIG_LGE_PM_PRM)
 	{
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_MULTI_MODE_FOR_VIDEO_MODE)
+		if (sde_enc->disp_info.display_type) {
+			if (!lge_vfps_check_internal())
+				sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
+		}
+#else
 		uint32_t div = (sde_enc->crtc != NULL && sde_enc->crtc->state != NULL)?
 			(sde_enc->crtc->state->adjusted_mode.vrefresh / sde_enc->crtc->mode.vrefresh):0;
 		if (sde_enc->disp_info.display_type) {
 			if (div < 2 || atomic_read(&phy_enc->vsync_cnt)%div == 0)
-					sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
-		} else {
+				sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
+		}
+#endif
+		else {
 			sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
 		}
 	}
 #else
-		sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
+	sde_enc->crtc_vblank_cb(sde_enc->crtc_vblank_cb_data);
 #endif
 	spin_unlock_irqrestore(&sde_enc->enc_spinlock, lock_flags);
 
@@ -5504,7 +5512,7 @@ static void _sde_encoder_destroy_debugfs(struct drm_encoder *drm_enc)
 
 static int sde_encoder_late_register(struct drm_encoder *encoder)
 {
-#ifdef CONFIG_LGE_PM_PRM
+#if IS_ENABLED(CONFIG_LGE_PM_PRM)
 	if (encoder) {
 		struct sde_encoder_virt *sde_enc = to_sde_encoder_virt(encoder);
 		if (sde_enc->disp_info.display_type) {

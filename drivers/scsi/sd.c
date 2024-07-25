@@ -56,7 +56,6 @@
 #include <linux/t10-pi.h>
 #include <linux/uaccess.h>
 #include <asm/unaligned.h>
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 #include <linux/kthread.h>
 #endif
@@ -1542,7 +1541,7 @@ static int media_not_present(struct scsi_disk *sdkp,
 	return 0;
 }
 
-#ifdef CONFIG_LFS_SCSI
+#ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 /**
  *	sd_check_events - check media events
  *	@disk: kernel device descriptor
@@ -1558,8 +1557,6 @@ static unsigned int sd_check_events(struct gendisk *disk, unsigned int clearing)
 	struct scsi_device *sdp = sdkp->device;
 	struct scsi_sense_hdr *sshdr = NULL;
 	int retval;
-
-	printk("alex enter sd_check_events\n");
 
 	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_check_events\n"));
 
@@ -3165,11 +3162,9 @@ static int sd_revalidate_disk(struct gendisk *disk)
 	 * react badly if we do.
 	 */
 	if (sdkp->media_present) {
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 		disk->media_present = 1;
 #endif
-
 		sd_read_capacity(sdkp, buffer);
 
 		/*
@@ -3353,7 +3348,7 @@ static void sd_scanpartition_async(void *data, async_cookie_t cookie)
 			delete_partition(gd, part->partno);
 		disk_part_iter_exit(&piter);
 
-		check_disk_size_change(gd, bdev, true);
+		check_disk_size_change(gd, bdev, false);
 		bdev->bd_invalidated = 0;
 		goto exit;
 	}
@@ -3387,11 +3382,7 @@ static int sd_media_scan_thread(void *__sdkp)
 			(sdkp->thread_remove && sdkp->async_end), 3*HZ);
 		if (sdkp->thread_remove && sdkp->async_end)
 			break;
-#ifdef CONFIG_LFS_SCSI
 		ret = sd_check_events(sdkp->disk, 0);
-#else
-		ret = 0;
-#endif
 
 		if (sdkp->prv_media_present
 				!= sdkp->media_present) {
@@ -3409,7 +3400,6 @@ static int sd_media_scan_thread(void *__sdkp)
 	complete_and_exit(&sdkp->scanning_done, 0);
 }
 #endif
-
 /*
  * The asynchronous part of sd_probe
  */
@@ -3456,7 +3446,6 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	blk_pm_runtime_init(sdp->request_queue, dev);
 	if (sdp->autosuspend_delay >= 0)
 		pm_runtime_set_autosuspend_delay(dev, sdp->autosuspend_delay);
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	if (sdp->host->by_usb) {
 		gd->interfaces = GENHD_IF_USB;
@@ -3465,11 +3454,9 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 #endif
 
 	device_add_disk(dev, gd);
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	sdkp->prv_media_present = sdkp->media_present;
 #endif
-
 	if (sdkp->capacity)
 		sd_dif_config_host(sdkp);
 
@@ -3483,14 +3470,12 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 
 	scsi_autopm_put_device(sdp);
 	put_device(&sdkp->dev);
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	if (sdp->host->by_usb) {
 		if (!IS_ERR(sdkp->th))
 			wake_up_process(sdkp->th);
 	}
 #endif
-
 }
 
 /**
@@ -3574,8 +3559,8 @@ static int sd_probe(struct device *dev)
 #ifdef CONFIG_LFS_SCSI_DEVICE_IDENTIFIER
 	if (!sdp->host->by_ufs) {
 		sdp->request_queue->backing_dev_info->capabilities |= BDI_CAP_STRICTLIMIT;
-		bdi_set_min_ratio(sdp->request_queue->backing_dev_info, 0);
-		bdi_set_max_ratio(sdp->request_queue->backing_dev_info, 10);
+		bdi_set_min_ratio(sdp->request_queue->backing_dev_info, 30);
+		bdi_set_max_ratio(sdp->request_queue->backing_dev_info, 60);
 	}
 #endif
 #endif
@@ -3591,7 +3576,6 @@ static int sd_probe(struct device *dev)
 
 	get_device(dev);
 	dev_set_drvdata(dev, sdkp);
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	if (sdp->host->by_usb) {
 		init_waitqueue_head(&sdkp->delay_wait);
@@ -3652,7 +3636,6 @@ static int sd_remove(struct device *dev)
 	sdkp = dev_get_drvdata(dev);
 	devt = disk_devt(sdkp->disk);
 	scsi_autopm_get_device(sdkp->device);
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	sdkp->disk->media_present = 0;
 	if (sdkp->device->host->by_usb) {

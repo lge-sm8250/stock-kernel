@@ -64,10 +64,14 @@
 #include <linux/of_gpio.h>
 #include <linux/pm_wakeup.h>
 
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/signal.h>
+#include <linux/fs.h>
+#endif
 #include <linux/timer.h>
 #define LGE_NFC_FIX
 #ifdef LGE_NFC_FIX
-#include <linux/sched/signal.h>
 #include <linux/async.h>
 #include <linux/nfc/sn100x_lge.h>
 #include <soc/qcom/lge/board_lge.h>
@@ -82,7 +86,7 @@
 #endif
 
 #define SIG_NFC 44
-#define MAX_BUFFER_SIZE 512
+#define MAX_BUFFER_SIZE 554
 #define MAX_SECURE_SESSIONS 1
 
 /* This macro evaluates to 1 if the cold reset is requested by driver(SPI/UWB). */
@@ -138,6 +142,8 @@ extern void rcv_prop_resp_status(const char * const buf);
 extern long ese_cold_reset(ese_cold_reset_origin_t src);
 extern void ese_reset_resource_init(void);
 extern void ese_reset_resource_destroy(void);
+extern void set_force_reset(bool value);
+extern int do_reset_protection(bool enable);
 
 #define SECURE_TIMER_WORK_QUEUE "SecTimerCbWq"
 
@@ -255,6 +261,7 @@ static int pn544_dev_release(struct inode *inode, struct file *filp) {
     spin_unlock_irqrestore(&pn544_dev->irq_enabled_lock, flags);
 #endif
     pn544_dev->state_flags &= ~(P544_FLAG_NFC_VEN_RESET|P544_FLAG_NFC_ON|P544_FLAG_FW_DNLD);
+    set_force_reset(false);
     if (pn544_dev->firm_gpio)
         gpio_set_value(pn544_dev->firm_gpio, 0);
     pr_info(KERN_ALERT "Exit %s: NFC driver release  nfc hal  \n", __func__);
@@ -341,7 +348,7 @@ ssize_t pn544_dev_read(struct file *filp, char __user *buf,
       }
     }
 
-    if (isFirstPacket == true)
+    if (isFirstPacket == true && !(filp->f_flags & O_NONBLOCK))
     {
 #ifdef READ_IRQ_MODIFY
       ret = wait_event_interruptible(pn544_dev->read_wq, do_reading|gpio_get_value(pn544_dev->irq_gpio)); // [NFC-7548]
@@ -516,7 +523,7 @@ static int signal_handler(p61_access_state_t state, long nfc_pid)
         if(task)
         {
             pr_info("%s.\n", task->comm);
-            sigret = force_sig_info(SIG_NFC, &sinfo, task);
+            sigret = send_sig_info(SIG_NFC, &sinfo, task);
             if(sigret < 0){
                 pr_info("send_sig_info failed..... sigret %d.\n", sigret);
                 ret = -1;
@@ -656,6 +663,7 @@ long  pn544_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 if (pn544_dev->firm_gpio) {
                     p61_update_access_state(pn544_dev, P61_STATE_DWNLD, true);
                     gpio_set_value(pn544_dev->firm_gpio, 1);
+                    pn544_dev->state_flags |= (P544_FLAG_FW_DNLD);
                 }
 
                 msleep(10);
@@ -679,6 +687,7 @@ long  pn544_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                     p61_update_access_state(pn544_dev, P61_STATE_DWNLD, false);
                 }
                 gpio_set_value(pn544_dev->firm_gpio, 0);
+                pn544_dev->state_flags &= ~(P544_FLAG_FW_DNLD);
             }
 
             pn544_dev->nfc_ven_enabled = true;
@@ -1004,6 +1013,14 @@ long  pn544_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             } else if (current_state & P61_STATE_SPI_PRIO) {
                 p61_update_access_state(pn544_dev, P61_STATE_SPI_PRIO, false);
             }
+        } else if(arg == 7){
+          long ret;
+          set_force_reset(true);
+          ret = do_reset_protection(true);
+        } else if(arg == 8){
+          long ret;
+          set_force_reset(false);
+          ret = do_reset_protection(false);
         } else {
             pr_info("%s bad ese pwr arg %lu\n", __func__, arg);
             p61_access_unlock(pn544_dev);
@@ -1177,12 +1194,14 @@ static void secure_timer_workqueue(struct work_struct *Wq)
     return;
 }
 
-#ifdef LGE_NFC_FIX
-static void secure_timer_callback(struct timer_list * data )
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
 static void secure_timer_callback( unsigned long data )
-#endif
 {
+(void)data;
+#else
+static void secure_timer_callback(struct timer_list *unused)
+{
+#endif
     /* Flush and push the timer callback event to the bottom half(work queue)
     to be executed later, at a safer time */
     flush_workqueue(pn544_dev->pSecureTimerCbWq);
@@ -1204,14 +1223,12 @@ static long start_seccure_timer(unsigned long timer_value)
     /* Start the timer if timer value is non-zero */
     if(timer_value)
     {
-
-#ifdef LGE_NFC_FIX
-        timer_setup( &secure_timer, secure_timer_callback, 0 );
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
         init_timer(&secure_timer);
         setup_timer( &secure_timer, secure_timer_callback, 0 );
+#else
+        timer_setup(&secure_timer, secure_timer_callback, 0);
 #endif
-
         pr_info("start_seccure_timer: timeout %lums (%lu)\n",timer_value, jiffies );
         ret = mod_timer( &secure_timer, jiffies + msecs_to_jiffies(timer_value));
         if (ret)
@@ -1461,7 +1478,7 @@ static int pn544_probe(struct i2c_client *client,
     pn544_dev->pSecureTimerCbWq = create_workqueue(SECURE_TIMER_WORK_QUEUE);
     INIT_WORK(&pn544_dev->wq_task, secure_timer_workqueue);
     pn544_dev->pn544_device.minor = MISC_DYNAMIC_MINOR;
-    pn544_dev->pn544_device.name = "pn547";
+    pn544_dev->pn544_device.name = "sn100x";
     pn544_dev->pn544_device.fops = &pn544_dev_fops;
 
     ret = misc_register(&pn544_dev->pn544_device);
@@ -1558,13 +1575,13 @@ static int pn544_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id pn544_id[] = {
-        { "pn547", 0 },
+        { "sn100x", 0 },
         { }
 };
 
 static struct of_device_id pn544_i2c_dt_match[] = {
     {
-        .compatible = "nxp,pn547",
+        .compatible = "nxp,sn100x",
     },
     {}
 };
@@ -1575,7 +1592,7 @@ static struct i2c_driver pn544_driver = {
         .remove     = pn544_remove,
         .driver     = {
                 .owner = THIS_MODULE,
-                .name  = "pn547",
+                .name  = "sn100x",
                 .of_match_table = pn544_i2c_dt_match,
         },
 };

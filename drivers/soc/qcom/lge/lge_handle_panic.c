@@ -45,23 +45,19 @@
 #define RAM_CONSOLE_ADDR_ADDR     0x58
 #define RAM_CONSOLE_SIZE_ADDR     0x5C
 #define FB_ADDR_ADDR              0x60
-#ifdef CONFIG_LGE_HANDLE_PANIC_RPMH_TIMEOUT
-#define RPMH_TIMEOUT_STRING_ADDR  0x6C
-/* caution : do NOT exceed struct size to SHARED_IMEM_BOOT_SIZE
- * struct boot_shared_imem_cookie_type
- * boot_images/QcomPkg/XBLLoader/boot_shared_imem_cookie.h */
-#define RPMH_TIMEOUT_STRING_SIZE  20
+#ifdef CONFIG_MACH_LITO_WINGLM
+#define DISPLAY_LDO_ENABLED       0x6C
 #endif
-
 
 #define RESTART_REASON      (msm_imem_base + RESTART_REASON_ADDR)
 #define CRASH_HANDLER_MAGIC (msm_imem_base + CRASH_HANDLER_MAGIC_ADDR)
 #define RAM_CONSOLE_ADDR    (msm_imem_base + RAM_CONSOLE_ADDR_ADDR)
 #define RAM_CONSOLE_SIZE    (msm_imem_base + RAM_CONSOLE_SIZE_ADDR)
 #define FB_ADDR             (msm_imem_base + FB_ADDR_ADDR)
-#ifdef CONFIG_LGE_HANDLE_PANIC_RPMH_TIMEOUT
-#define RPMH_TIMEOUT_ADDR   (msm_imem_base + RPMH_TIMEOUT_STRING_ADDR)
+#ifdef CONFIG_MACH_LITO_WINGLM
+#define DISPLAY_LDO_ENABLED_ADDR (msm_imem_base + DISPLAY_LDO_ENABLED)
 #endif
+
 static void *msm_imem_base;
 static int dummy_arg;
 static int subsys_crash_magic;
@@ -103,38 +99,26 @@ static void lge_get_mmu_sys_ctrl_register(void)
 						far_el1, contextidr_el1, tpidr_el0, tpidr_el1, tpidrro_el0);
 }
 
-#ifdef CONFIG_LGE_HANDLE_PANIC_RPMH_TIMEOUT
-static int rpmh_timeout_panic = 0;
-
-void lge_set_rpmh_timeout_panic(const char* str)
+#ifdef CONFIG_MACH_LITO_WINGLM
+void lge_set_display_ldo_enabled(unsigned int val)
 {
-	int i;
-	size_t len;
-	char buf[RPMH_TIMEOUT_STRING_SIZE] = {0, };
+	writeb_relaxed(val, DISPLAY_LDO_ENABLED_ADDR);
+}
+#endif
 
-	if (str == NULL) return;
+#ifdef CONFIG_LGE_HANDLE_PANIC_RPMH_TIMEOUT
+static int rphm_timeout_panic = 0;
 
-	rpmh_timeout_panic = 1;
-
-	len = strlen(str);
-	if (len > RPMH_TIMEOUT_STRING_SIZE - 1) {
-		char* ptr = (char*)str;
-		ptr += (len - RPMH_TIMEOUT_STRING_SIZE + 1);
-		strncpy(buf, ptr, RPMH_TIMEOUT_STRING_SIZE - 1);
-	} else {
-		strncpy(buf, str, RPMH_TIMEOUT_STRING_SIZE -1);
-	}
-
-	for(i=0; i<RPMH_TIMEOUT_STRING_SIZE; i++) {
-		writeb_relaxed(buf[i], RPMH_TIMEOUT_ADDR+i);
-	}
+void lge_set_rphm_timeout_panic(void)
+{
+	rphm_timeout_panic = 1;
 }
 #endif
 
 void lge_set_subsys_crash_reason(const char *name, int type)
 {
 	const char *subsys_name[] =
-		{ "adsp", "mba", "modem", "wcnss", "slpi", "venus", "cdsp", "esoc0", "wlan"};
+		{ "adsp", "mba", "modem", "wcnss", "slpi", "venus", "cdsp", "esoc0"};
 	int i = 0;
 
 	if (!name)
@@ -173,7 +157,7 @@ void lge_set_panic_reason(void)
 		return;
 	}
 
-	if (lge_get_download_mode() && rpmh_timeout_panic) {
+	if (lge_get_download_mode() && rphm_timeout_panic) {
 		lge_set_restart_reason(LGE_RB_MAGIC | LGE_ERR_KERN | LGE_ERR_KERN_RPMH_TIMEOUT);
 		return;
 	}
@@ -375,15 +359,6 @@ static int gen_modem_panic(const char *val, const struct kernel_param *kp)
 	return 0;
 }
 module_param_call(gen_modem_panic, gen_modem_panic, param_get_bool,
-		&dummy_arg, S_IWUSR | S_IRUGO | S_IWGRP);
-
-
-static int gen_wlan_panic(const char *val, const struct kernel_param *kp)
-{
-	subsystem_restart("wlan");
-	return 0;
-}
-module_param_call(gen_wlan_panic, gen_wlan_panic, param_get_bool,
 		&dummy_arg, S_IWUSR | S_IRUGO | S_IWGRP);
 
 static int gen_esoc0_panic(const char *val, const struct kernel_param *kp)

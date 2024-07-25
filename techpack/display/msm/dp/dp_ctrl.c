@@ -54,6 +54,7 @@ extern bool is_ds_connected(void);
 
 #ifdef CONFIG_LGE_DISPLAY_COMMON
 bool dp_lt1_state;
+int dp_ctrl_status;
 #endif
 
 
@@ -228,7 +229,7 @@ static int dp_ctrl_update_sink_vx_px(struct dp_ctrl_private *ctrl)
 	for (i = 0; i < size; i++)
 		buf[i] = v_level | p_level | max_level_reached;
 
-	DP_DEBUG("lanes: %d, swing: 0x%x, pre-emp: 0x%x\n",
+	DP_INFO("lanes: %d, swing: 0x%x, pre-emp: 0x%x\n",
 			size, v_level, p_level);
 
 	ret = drm_dp_dpcd_write(ctrl->aux->drm_aux,
@@ -310,7 +311,7 @@ static int dp_ctrl_lane_count_down_shift(struct dp_ctrl_private *ctrl)
 		break;
 	}
 
-	DP_DEBUG("new lane count=%d\n", ctrl->link->link_params.lane_count);
+	DP_INFO("new lane count=%d\n", ctrl->link->link_params.lane_count);
 
 	return ret;
 }
@@ -452,7 +453,7 @@ static int dp_ctrl_link_rate_down_shift(struct dp_ctrl_private *ctrl)
 		ctrl->link->link_params.bw_code = DP_LINK_BW_2_7;
 	}
 #endif
-	DP_DEBUG("new bw code=0x%x\n", ctrl->link->link_params.bw_code);
+	DP_INFO("new bw code=0x%x\n", ctrl->link->link_params.bw_code);
 
 	return ret;
 }
@@ -648,7 +649,7 @@ static void dp_ctrl_set_clock_rate(struct dp_ctrl_private *ctrl,
 		cfg++;
 	}
 
-	DP_DEBUG("setting rate=%d on clk=%s\n", rate, name);
+	DP_INFO("setting rate=%d on clk=%s\n", rate, name);
 
 	if (num)
 		cfg->rate = rate;
@@ -670,7 +671,8 @@ static int dp_ctrl_enable_link_clock(struct dp_ctrl_private *ctrl)
 	if (ret) {
 		DP_ERR("Unabled to start link clocks\n");
 		ret = -EINVAL;
-	}
+	} else
+		ctrl->power_on = true;
 
 	return ret;
 }
@@ -678,6 +680,7 @@ static int dp_ctrl_enable_link_clock(struct dp_ctrl_private *ctrl)
 static void dp_ctrl_disable_link_clock(struct dp_ctrl_private *ctrl)
 {
 	ctrl->power->clk_enable(ctrl->power, DP_LINK_PM, false);
+	ctrl->power_on = false;
 }
 
 static void dp_ctrl_select_training_pattern(struct dp_ctrl_private *ctrl,
@@ -716,6 +719,9 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 	u32 link_train_max_retries = 100;
 	struct dp_catalog_ctrl *catalog;
 	struct dp_link_params *link_params;
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+	struct dp_ctrl *dpctrl = &ctrl->dp_ctrl;
+#endif
 
 	catalog = ctrl->catalog;
 	link_params = &ctrl->link->link_params;
@@ -724,7 +730,7 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 				link_params->lane_count);
 
 	while (1) {
-		DP_DEBUG("bw_code=%d, lane_count=%d\n",
+		DP_INFO("bw_code=%d, lane_count=%d\n",
 			link_params->bw_code, link_params->lane_count);
 
 		rc = dp_ctrl_enable_link_clock(ctrl);
@@ -749,7 +755,7 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 
 		rc = dp_ctrl_setup_main_link(ctrl);
 #if defined(CONFIG_LGE_DUAL_SCREEN)
-		if(!rc) {
+		if (!rc) {
 			if (is_ds_connected()) {
 				hallic_set_state(&dd_lt_dev, 1);
 			}
@@ -774,6 +780,10 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 
 		if (!link_train_max_retries || atomic_read(&ctrl->aborted)) {
 			dp_ctrl_disable_link_clock(ctrl);
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+			pr_err("lt_failure true\n");
+			dpctrl->lt_failure = true;
+#endif
 			break;
 		}
 
@@ -1400,13 +1410,14 @@ static void dp_ctrl_off(struct dp_ctrl *dp_ctrl)
 
 #if defined(CONFIG_LGE_DUAL_SCREEN)
 	dd_lt_dev.state = 0;
+	dp_ctrl_status = 0;
 #endif
 	ctrl->mst_mode = false;
 	ctrl->fec_mode = false;
 	ctrl->dsc_mode = false;
 	ctrl->power_on = false;
 	memset(&ctrl->mst_ch_info, 0, sizeof(ctrl->mst_ch_info));
-	DP_DEBUG("DP off done\n");
+	DP_INFO("DP off done\n");
 }
 
 static void dp_ctrl_set_mst_channel_info(struct dp_ctrl *dp_ctrl,

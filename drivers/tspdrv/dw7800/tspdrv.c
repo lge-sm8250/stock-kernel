@@ -430,6 +430,10 @@ static ssize_t write(struct file *file, const char *buf, size_t count, loff_t *p
 {
     *ppos = 0;  /* file position not used, always set to 0 */
 
+	if(!i2c_probe_success()) {
+		return -EIO;
+	}
+
     /*
     ** Prevent unauthorized caller to write data.
     ** TouchSense service is the only valid caller.
@@ -482,6 +486,10 @@ static long unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 static int ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 #endif
 {
+	if(!i2c_probe_success()) {
+		return -EIO;
+	}
+
     switch (cmd)
     {
         case TSPDRV_SET_MAGIC_NUMBER:

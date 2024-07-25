@@ -34,7 +34,6 @@ static diag_lock_state_t diag_lock_state = DIAG_LOCK_STATE_LOCK;
 static unsigned char allowed_commands[] = {
 #ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
 	0xA1, // port lock
-	0xEF,
 #else
 	0x29, // testmode reset
 	0x3A, // dload reset
@@ -125,7 +124,6 @@ bool diag_lock_is_allowed_command(const unsigned char *buf)
 	case OP_SPR_US:
 		switch (buf[0]) {
 		case 0xA1:	//port lock
-		case 0xEF:
 			return true;
 		default:
 			break;
@@ -226,8 +224,7 @@ static int __init diag_lock_init(void)
 
 #ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
 #ifdef CONFIG_LGE_ONE_BINARY_SKU
-	if ((lge_get_laop_operator() == OP_SPR_US) || \
-	    (lge_get_laop_operator() == OP_TMO_US) )
+	if (lge_get_laop_operator() == OP_SPR_US)
 #endif
 	diag_lock_state = get_diag_lock_state_from_smem();
 #endif

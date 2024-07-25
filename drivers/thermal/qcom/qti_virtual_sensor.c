@@ -10,7 +10,7 @@
 #include <linux/platform_device.h>
 
 #include "qti_virtual_sensor.h"
-#ifdef CONFIG_LGE_VIRTUAL_SENSOR
+#ifdef CONFIG_LGE_PM_VIRTUAL_SENSOR
 #include "lge_virtual_sensor.h"
 #endif
 
@@ -204,7 +204,7 @@ int qti_virtual_sensor_register(struct device *dev)
 		else
 			dev_dbg(dev, "sensor:%d registered\n", idx);
 	}
-#ifdef CONFIG_LGE_VIRTUAL_SENSOR
+#ifdef CONFIG_LGE_PM_VIRTUAL_SENSOR
 	lge_virtual_sensor_register(dev);
 #endif
 

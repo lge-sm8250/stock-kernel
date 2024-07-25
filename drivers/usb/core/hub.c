@@ -57,7 +57,7 @@ static void hub_event(struct work_struct *work);
 /* synchronize hub-port add/remove and peering operations */
 DEFINE_MUTEX(usb_port_peer_mutex);
 
-static bool skip_extended_resume_delay = 1;
+static bool skip_extended_resume_delay = 0;
 module_param(skip_extended_resume_delay, bool, 0644);
 MODULE_PARM_DESC(skip_extended_resume_delay,
 		"removes extra delay added to finish bus resume");
@@ -2017,13 +2017,6 @@ void usb_set_device_state(struct usb_device *udev,
 {
 	unsigned long flags;
 	int wakeup = -1;
-
-#ifdef CONFIG_LGE_USB
-	if(!udev) {
-		pr_err("[BSP-USB] Failed to get udev\n");
-		return;
-	}
-#endif
 
 	spin_lock_irqsave(&device_state_lock, flags);
 	if (udev->state == USB_STATE_NOTATTACHED)

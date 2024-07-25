@@ -186,6 +186,7 @@ undo:
 	return -ENODEV;
 }
 
+#if 0
 static void amsdriver_remove_sysfs_interfaces(struct device *dev,
 	struct device_attribute *a, int size)
 {
@@ -200,6 +201,7 @@ static void amsdriver_remove_sysfs_interfaces(struct device *dev,
 	for (i = 0; i < size; i++)
 		device_remove_file(dev, a + i);
 }
+#endif
 
 static irqreturn_t amsdriver_irq(int irq, void *handle)
 {
@@ -466,6 +468,7 @@ int amsdriver_probe(struct i2c_client *client,
 
 	if (deviceId == AMS_UNKNOWN_DEVICE) {
 		dev_info(dev, "ams_validateDevice failed: AMS_UNKNOWN_DEVICE\n");
+		ret = -ENODEV;
 		goto id_failed;
 	}
 
@@ -610,7 +613,7 @@ int amsdriver_probe(struct i2c_client *client,
 
 	if (ret) {
 		dev_info(dev, "Failed to request irq %d\n", client->irq);
-		goto irq_register_fail;
+//		goto irq_register_fail;
 	}
 
 
@@ -622,15 +625,12 @@ int amsdriver_probe(struct i2c_client *client,
 	/* This must be unwound in the correct order, reverse from initialization above */
 	/********************************************************************************/
 
-irq_register_fail:
+//irq_register_fail:
 
 #ifdef CONFIG_AMS_OPTICAL_SENSOR_ALS
+input_a_sysfs_failed:
 	if (chip->flicker_idev)
 	{
-		amsdriver_remove_sysfs_interfaces(&chip->flicker_idev->dev,
-						osal_als_attrs,
-						osal_als_attrs_size);
-input_a_sysfs_failed:
 		input_unregister_device(chip->flicker_idev);
 	}
 input_a_alloc_failed:

@@ -215,7 +215,11 @@ static int lgttf_set_each_data(struct lgttf_table *table, struct lgttf_curr_prof
 
 	/* make ttf data */
 	for (i = (LGTTF_SLOT_COUNT-1); i >= 0 ; i--) {
+#ifdef CONFIG_LGE_PM_EXT_QG_V2
+		if (i > lgttf.base.full_soc - 1)
+#else
 		if (i > lgttf.base.full_soc - 2)
+#endif
 			table->data[i].ttf = 0;
 		else
 			table->data[i].ttf =
@@ -412,7 +416,8 @@ static void lgttf_work_func(struct work_struct *work)
 	if (charger == CHARGING_SUPPLY_WIRELESS_5W ) {
 		lgttf.rt.selected = LGTTF_ID_WLC_BPP;
 		lgttf.rt.chg_type = LGTTF_TYPE_WIRELESS;
-	} else if (charger == CHARGING_SUPPLY_WIRELESS_9W) {
+	} else if (charger == CHARGING_SUPPLY_WIRELESS_9W
+			|| charger == CHARGING_SUPPLY_WIRELESS_15W) {
 		lgttf.rt.selected = LGTTF_ID_WLC_EPP;
 		lgttf.rt.chg_type = LGTTF_TYPE_WIRELESS;
 	}
@@ -621,7 +626,7 @@ bool charging_time_create(
 	veneer_voter_register(&lgttf.ibat_voter, BCC_VOTER, VOTER_TYPE_IBAT, false);
 
 	lgttf_init_rt();
-
+	pr_chgtime(ERROR, "success to create charging time V3\n");
 	return true;
 
 fail:

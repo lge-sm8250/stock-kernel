@@ -16,8 +16,13 @@
 #include "cam_packet_util.h"
 
 #define LIMIT_STATUS_POLLING	(15)
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+extern int32_t sunny_imx363_init_set_onsemi_ois(struct cam_ois_ctrl_t *o_ctrl);
+extern int sunny_imx363_onsemi_ois_poll_ready(int limit);
+#else
 extern int32_t lgit_s5kgw1_init_set_onsemi_ois(struct cam_ois_ctrl_t *o_ctrl);
 extern int lgit_s5kgw1_onsemi_ois_poll_ready(int limit);
+#endif
 
 extern void msm_ois_create_sysfs(void);
 extern void msm_ois_destroy_sysfs(void);
@@ -263,7 +268,11 @@ static int cam_ois_apply_settings(struct cam_ois_ctrl_t *o_ctrl,
 			}
 		} else if (i2c_list->op_code == CAM_SENSOR_I2C_POLL) {
 /* LGE_CHANGE_S, use LGE POLL function, 2018-01-16, hongs.lee@lge.com */
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+			rc = sunny_imx363_onsemi_ois_poll_ready(LIMIT_STATUS_POLLING);
+#else
             rc = lgit_s5kgw1_onsemi_ois_poll_ready(LIMIT_STATUS_POLLING);
+#endif
 			if (rc < 0) {
 				CAM_ERR(CAM_OIS, "i2c poll apply setting Fail");
 				return rc;
@@ -645,23 +654,23 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				goto pwr_dwn;
 			}
 		}
-
-		//rc = cam_ois_apply_settings(o_ctrl, &o_ctrl->i2c_init_data); // QCT original , need to block code for judy
-#ifdef CONFIG_MACH_LGE
-		rc = lgit_s5kgw1_init_set_onsemi_ois(o_ctrl);
-#endif
+#ifndef CONFIG_MACH_LGE
+		rc = cam_ois_apply_settings(o_ctrl, &o_ctrl->i2c_init_data);
 		if ((rc == -EAGAIN) &&
 			(o_ctrl->io_master_info.master_type == CCI_MASTER)) {
 			CAM_WARN(CAM_OIS,
 				"CCI HW is restting: Reapplying INIT settings");
 			usleep_range(1000, 1010);
-#ifdef CONFIG_MACH_LGE
-			rc = lgit_s5kgw1_init_set_onsemi_ois(o_ctrl);
-#else
 			rc = cam_ois_apply_settings(o_ctrl,
-				&o_ctrl->i2c_init_data); // QCT original , need to block code for judy
-#endif
+				&o_ctrl->i2c_init_data);
 		}
+#else
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+		rc = sunny_imx363_init_set_onsemi_ois(o_ctrl);
+#else
+		rc = lgit_s5kgw1_init_set_onsemi_ois(o_ctrl);
+#endif
+#endif
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS,
 				"Cannot apply Init settings: rc = %d",
@@ -826,7 +835,6 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		}
 		break;
 	}
-
 	default:
 		CAM_ERR(CAM_OIS, "Invalid Opcode: %d",
 			(csl_packet->header.op_code & 0xFFFFFF));

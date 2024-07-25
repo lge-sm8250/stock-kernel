@@ -8,9 +8,19 @@
 #include "cam_debug_util.h"
 #include "lgit_onsemi_actuator_utils.h"
 
+#if defined(CONFIG_MACH_LAGOON_SMASHJLM)
+#define REG_ADDR_SOC_0 0xF01A
+#define REG_ADDR_SOC_1 (0x3)
+#define REG_ADDR_SOC_3 (0x3)
+#elif defined(CONFIG_MACH_LITO_WINGLM)
 #define REG_ADDR_SOC_0 (0x84)
 #define REG_ADDR_SOC_1 (0x3)
 #define REG_ADDR_SOC_3 (0x84)
+#else
+#define REG_ADDR_SOC_0 (0x3)
+#define REG_ADDR_SOC_1 (0x3)
+#define REG_ADDR_SOC_3 (0x3)
+#endif
 
 extern struct class* get_camera_class(void);
 extern void actuator_create_sysfs(struct cam_actuator_ctrl_t *a_ctrl);

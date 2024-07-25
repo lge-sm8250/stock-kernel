@@ -1095,7 +1095,7 @@ int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 		seq_printf(m, "\n=== psi trigger setting ===\n");
 
 		list_for_each_entry(trigger, &group->triggers, node)
-			seq_printf(m, "%s: %s threshold:%lluns window:%lluns\n", trigger->comm, trigger->state==PSI_MEM_SOME?"some":"full", trigger->threshold, trigger->win.size);
+			seq_printf(m, "%s: %s threshold:%lluus window:%lluus\n", trigger->comm, trigger->state==PSI_MEM_SOME?"some":"full", trigger->threshold, trigger->win.size);
 	}
 
 	return 0;

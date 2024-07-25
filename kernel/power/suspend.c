@@ -33,6 +33,9 @@
 #include <linux/compiler.h>
 #include <linux/moduleparam.h>
 #include <linux/wakeup_reason.h>
+#ifdef CONFIG_DPM_WATCHDOG
+#include <linux/timer.h>
+#endif
 
 #include "power.h"
 
@@ -357,7 +360,6 @@ static void suspend_watchdog_set(struct suspend_watchdog *wd)
 	struct timer_list *timer = &wd->timer;
 
 	timer_setup_on_stack(timer, suspend_watchdog_handler, 0);
-
 	timer->expires = jiffies + HZ * CONFIG_DPM_WATCHDOG_TIMEOUT * 3;
 	add_timer(timer);
 }
@@ -606,10 +608,10 @@ static int bg_sync(void)
 
 	suspend_sync_wq_init();
 
-    if (!suspend_sync_wq) {
-        printk(KERN_DEBUG "[bg_sync] Failed to create workqueue\n");
-        return -ENOMEM;
-    }
+	if (!suspend_sync_wq) {
+		printk(KERN_DEBUG "[bg_sync] Failed to create workqueue\n");
+		return -ENOMEM;
+	}
 
 	if (work_busy(&work_sync)) {
 		printk(KERN_DEBUG "[bg_sync] work_sync already run\n");
@@ -727,7 +729,7 @@ static int enter_state(suspend_state_t state)
 static bool debug_irq_pin = false;
 bool suspend_debug_irq_pin(void)
 {
-	return debug_irq_pin;
+    return debug_irq_pin;
 }
 EXPORT_SYMBOL(suspend_debug_irq_pin);
 #endif
@@ -746,7 +748,7 @@ int pm_suspend(suspend_state_t state)
 	if (state <= PM_SUSPEND_ON || state >= PM_SUSPEND_MAX)
 		return -EINVAL;
 #ifdef CONFIG_LGE_PM
-	debug_irq_pin = true;
+    debug_irq_pin = true;
 #endif
 	pr_info("suspend entry (%s)\n", mem_sleep_labels[state]);
 	error = enter_state(state);
@@ -758,7 +760,7 @@ int pm_suspend(suspend_state_t state)
 	}
 	pr_info("suspend exit\n");
 #ifdef CONFIG_LGE_PM
-	debug_irq_pin = false;
+    debug_irq_pin = false;
 #endif
 	return error;
 }

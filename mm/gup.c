@@ -1106,8 +1106,6 @@ long get_user_pages_foll_cma(struct task_struct *tsk, struct mm_struct *mm,
 			pages, vmas, NULL, flags|FOLL_CMA);
 }
 #endif
-
-
 /*
  * We can leverage the VM_FAULT_RETRY functionality in the page fault
  * paths better by using either get_user_pages_locked() or

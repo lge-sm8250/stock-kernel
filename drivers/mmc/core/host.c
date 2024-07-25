@@ -82,8 +82,7 @@ void mmc_unregister_host_class(void)
 	class_unregister(&mmc_host_class);
 }
 
-
-#ifdef CONFIG_LFS_MMC
+#ifdef CONFIG_LFS_MMC_TRAY_EVENT
 static ssize_t cd_status_show(struct device *dev,
         struct device_attribute *attr, char *buf)
 {
@@ -98,37 +97,8 @@ DEVICE_ATTR(cd_status, S_IRUGO,
 
 static inline void mmc_host_cd_status_sysfs_init(struct mmc_host *host)
 {
-
-
     if (device_create_file(&host->class_dev, &dev_attr_cd_status))
         pr_err("%s: Failed to create clkgate_delay sysfs entry\n",
-                mmc_hostname(host));
-}
-
-static ssize_t err_stats_show(struct device *dev,
-        struct device_attribute *attr, char *buf)
-{
-    int n=0;
-    struct mmc_host *host = cls_dev_to_mmc_host(dev);
-
-    n += sprintf(buf, "# Command Timeout Occurred:\t %d\n", host->err_stats[MMC_ERR_CMD_TIMEOUT]);
-    n += sprintf(buf+n, "# Command CRC Errors Occurred:\t %d\n", host->err_stats[MMC_ERR_CMD_CRC]);
-    n += sprintf(buf+n, "# Data Timeout Occurred:\t %d\n", host->err_stats[MMC_ERR_DAT_TIMEOUT]);
-    n += sprintf(buf+n, "# Data CRC Errors Occurred:\t %d\n", host->err_stats[MMC_ERR_DAT_CRC]);
-    n += sprintf(buf+n, "# Auto-Cmd Error Occurred:\t %d\n", host->err_stats[MMC_ERR_AUTO_CMD]);
-	n += sprintf(buf+n, "# ADMA Error Occurred:\t %d\n", host->err_stats[MMC_ERR_ADMA]);
-    n += sprintf(buf+n, "# Request Timedout:\t %d\n", host->err_stats[MMC_ERR_REQ_TIMEOUT]);
-    return n += sprintf(buf+n, "# ICE Config Errors:\t %d\n", host->err_stats[MMC_ERR_ICE_CFG]);
-}
-
-
-DEVICE_ATTR(err_stats, S_IRUGO,
-        err_stats_show, NULL);
-
-static inline void mmc_host_err_stats_sysfs_init(struct mmc_host *host)
-{
-    if (device_create_file(&host->class_dev, &dev_attr_err_stats))
-        pr_err("%s: Failed to create err_stats sysfs entry\n",
                 mmc_hostname(host));
 }
 #endif
@@ -705,11 +675,9 @@ int mmc_add_host(struct mmc_host *host)
 #ifdef CONFIG_DEBUG_FS
 	mmc_add_host_debugfs(host);
 #endif
-#ifdef CONFIG_LFS_MMC
-	if (!(host->caps & MMC_CAP_NONREMOVABLE)) {
+#ifdef CONFIG_LFS_MMC_TRAY_EVENT
+	if (!(host->caps & MMC_CAP_NONREMOVABLE))
 		mmc_host_cd_status_sysfs_init(host);
-		mmc_host_err_stats_sysfs_init(host);
-	}
 #endif
 
 #ifdef CONFIG_MMC_IPC_LOGGING

@@ -225,6 +225,9 @@ static inline void *module_get_device(struct module_data *md)
 
 static inline struct module_data *to_module(struct device *dev)
 {
+	if (dev == NULL)
+		return NULL;
+
 	return (struct module_data *)dev_get_drvdata(dev);
 }
 

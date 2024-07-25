@@ -106,6 +106,8 @@ static ssize_t set_err_mask(struct device *dev,
 	if (panel->lge.ddic_ops && panel->lge.ddic_ops->set_err_detect_mask) {
 		if (panel->lge.ddic_ops->set_err_detect_mask(panel))
 			pr_err("err detect mask %d set failed\n", panel->lge.err_detect_mask);
+	} else {
+		pr_err("Not support\n");
 	}
 	mutex_unlock(&panel->panel_lock);
 
@@ -191,28 +193,25 @@ static DEVICE_ATTR(err_crash, S_IRUGO | S_IWUSR | S_IWGRP,
 					get_err_crash, set_err_crash);
 static DEVICE_ATTR(mem_test, S_IRUGO, get_mem_test, NULL);
 
-int lge_panel_err_detect_create_sysfs(struct dsi_panel *panel, struct class *class_panel)
+static struct attribute *err_detect_attrs[] = {
+	&dev_attr_err_mask.attr,
+	&dev_attr_err_crash.attr,
+	&dev_attr_mem_test.attr,
+	NULL,
+};
+
+static const struct attribute_group err_detect_attr_group = {
+	.name	= "error_detect",
+	.attrs	= err_detect_attrs,
+};
+
+int lge_panel_err_detect_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev)
 {
 	int rc = 0;
-	static struct device *error_detect_sysfs_dev = NULL;
 
-	if (!panel && !class_panel) {
-		pr_err("Invalid input\n");
-		return -EINVAL;;
-	}
-
-	if (!error_detect_sysfs_dev) {
-		error_detect_sysfs_dev = device_create(class_panel, NULL, 0, panel, "error_detect");
-		if (IS_ERR(error_detect_sysfs_dev)) {
-			pr_err("Failed to create dev(aod_sysfs_dev)!");
-		} else {
-			if ((rc = device_create_file(error_detect_sysfs_dev, &dev_attr_err_mask)) < 0)
-				pr_err("add error mask node fail!");
-			if ((rc = device_create_file(error_detect_sysfs_dev, &dev_attr_mem_test)) < 0)
-				pr_err("add mem test node fail!");
-			if ((rc = device_create_file(error_detect_sysfs_dev, &dev_attr_err_crash)) < 0)
-				pr_err("add error crash node fail!");
-		}
+	if (panel_sysfs_dev) {
+		if ((rc = sysfs_create_group(&panel_sysfs_dev->kobj, &err_detect_attr_group)) < 0)
+			pr_err("create error_detect group fail!");
 	}
 	return rc;
 }

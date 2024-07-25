@@ -195,21 +195,22 @@ static DEVICE_ATTR(command, S_IWUSR, NULL, send_command);
 static DEVICE_ATTR(command_state, S_IWUSR, get_command_state, set_command_state);
 static DEVICE_ATTR(read_reg, S_IRUGO | S_IWUSR, read_command_data, read_command);
 
-void lge_panel_reg_create_sysfs(struct dsi_panel *panel, struct class *class_panel)
-{
-	static struct device *panel_reg_dev = NULL;
+static struct attribute *reg_attrs[] = {
+	&dev_attr_command.attr,
+	&dev_attr_command_state.attr,
+	&dev_attr_read_reg.attr,
+	NULL,
+};
 
-	if (!panel_reg_dev) {
-		panel_reg_dev = device_create(class_panel, NULL, 0, panel, "reg");
-		if (IS_ERR(panel_reg_dev)) {
-			pr_err("Failed to create dev(panel_reg_dev)!\n");
-		} else {
-			if (device_create_file(panel_reg_dev, &dev_attr_command) < 0)
-				pr_err("Failed to create panel/reg/command\n");
-			if (device_create_file(panel_reg_dev, &dev_attr_command_state) < 0)
-				pr_err("Failed to create panel/reg/command_state\n");
-			if (device_create_file(panel_reg_dev, &dev_attr_read_reg) < 0)
-				pr_err("Failed to create panel/reg/read_reg\n");
-		}
+static const struct attribute_group reg_attr_group = {
+	.name	= "reg",
+	.attrs	= reg_attrs,
+};
+
+void lge_panel_reg_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev)
+{
+	if (panel_sysfs_dev) {
+		if (sysfs_create_group(&panel_sysfs_dev->kobj, &reg_attr_group) < 0)
+			pr_err("create reg group fail!");
 	}
 }

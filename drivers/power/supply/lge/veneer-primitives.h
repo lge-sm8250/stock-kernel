@@ -114,7 +114,7 @@ enum veneer_feed_id {
     VENEER_FEED_ACTM_CURRENT_BPP_2,
 
     VENEER_FEED_STATUS_RAW,
-    VENEER_FEED_CAPACITY,
+    VENEER_FEED_CAPACITY,	    /*protection-batvolt.c*/
     VENEER_FEED_CAPACITY_RAW,
     VENEER_FEED_CHARGE_TYPE,
     VENEER_FEED_CHARGER_TYPE,
@@ -134,15 +134,21 @@ enum veneer_feed_id {
     VENEER_FEED_SMB_EN_REASON,
 
     VENEER_FEED_LCDON_STATUS,
+#ifndef CONFIG_LGE_PM_CCD
     VENEER_FEED_POWER_SUPPLY_CHANGED,
+#endif
+    VENEER_FEED_BATT_PROFILE_FCC_VOTER,    /*adaptive-charging-thermal.c*/
+    VENEER_FEED_BATT_PROFILE_FV_VOTER,    /*protection-batvolt.c*/
 
-	VENEER_FEED_BATT_PROFILE_FCC_VOTER,
-	VENEER_FEED_BATT_PROFILE_FV_VOTER,
+#ifndef CONFIG_LGE_PM_CCD
+    VENEER_FEED_POWER_NOW,
+    VENEER_FEED_BSM_TTF,
+#endif
+	VENEER_FEED_BATT_PSY_IBAT_NOW,
+	VENEER_FEED_USB_PRESENT,
+	VENEER_FEED_WIRELESS_PRESENT,
+	VENEER_FEED_HVT_SOC_RESCALE,
 
-	VENEER_FEED_POWER_NOW,
-	VENEER_FEED_BSM_TTF,
-
-	VENEER_FEED_PPS_TA_COUNT,
     VENEER_FEED_MAX,
 };
 
@@ -257,6 +263,7 @@ enum charging_supplier { // Exclusive charging types
 
 	CHARGING_SUPPLY_WIRELESS_5W,
 	CHARGING_SUPPLY_WIRELESS_9W,
+	CHARGING_SUPPLY_WIRELESS_15W,
 	CHARGING_SUPPLY_MAX,
 };
 
@@ -347,6 +354,7 @@ const char* charger_name(enum charging_supplier charger)
 
 	case CHARGING_SUPPLY_WIRELESS_5W :	return "W5W";
 	case CHARGING_SUPPLY_WIRELESS_9W :	return "W9W";
+	case CHARGING_SUPPLY_WIRELESS_15W :	return "W15W";
 
 	default :
 		break;
@@ -446,6 +454,7 @@ bool charging_ceiling_sdpmax(bool enable);
 void charging_ceiling_destroy(void);
 bool charging_ceiling_create(struct device_node* dnode);
 
+#ifndef CONFIG_LGE_PM_CCD
 int  charging_time_remains(int rawsoc);
 void charging_time_clear(void);
 void charging_time_destroy(void);
@@ -453,6 +462,7 @@ bool charging_time_update(enum charging_supplier charger, bool reloading);
 bool charging_time_create(struct device_node* dnode, int fullraw,
 	int (*get_veneer_param)(int id, int *value),
 	int (*set_veneer_param)(int id, int value));
+#endif
 
 void protection_battemp_monitor(void);
 void protection_battemp_destroy(void);
@@ -467,6 +477,7 @@ bool protection_batvolt_create(struct device_node* dnode, int mincap,
 	int (*get_veneer_param)(int id, int *val),
 	int (*set_veneer_param)(int id, int value));
 
+#ifndef CONFIG_LGE_PM_CCD
 void protection_showcase_update(void);
 void protection_showcase_destroy(void);
 bool protection_showcase_create(struct device_node* dnode,
@@ -477,12 +488,15 @@ void protection_usbio_trigger(void);
 void protection_usbio_update(bool presence_usb);
 void protection_usbio_destroy(void);
 bool protection_usbio_create(struct device_node* dnode);
+#endif
 
+#if defined(CONFIG_LGE_PM_ACTM) || defined(CONFIG_LGE_PM_ACTM_V2)
 void actm_trigger(void);
 void actm_destroy(void);
 bool actm_create(struct device_node* dnode,
 	int (*get_veneer_param)(int id, int *value),
 	int (*set_veneer_param)(int id, int value));
+#endif
 
 enum veneer_bootmode unified_bootmode_type(void);
 enum charger_usbid unified_bootmode_usbid(void);

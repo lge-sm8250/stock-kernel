@@ -4,7 +4,7 @@
  * - JUDY-7463      : Detection of Standard HVDCP2
  * - JUDY-7843      : Rerun apsd for dcp charger
  * - TIME-3624      : Rerun apsd for abnormal sdp
- * - JUDY-7303      : Charging without CC
+ * - JUDY-7303      : Charging without CC	**need to update**
  * - MCCCC-11191    : Rerun apsd for unknown charger
  * - JUDY-6149      : Support for weak battery pack
  * - JUDY-7649      : Resuming Suspended USBIN
@@ -15,11 +15,10 @@
  * - MCCCC-16139    : Recovery vashdn during wireless charging
  * - MCCCC-16161    : Retry to enable vconn on vconn-oc
  * - MCCCC-19045    : Retry pd check
- * - TIME-3963      : Avoid Inrush current for USB Compliance test
+ * - MCCCC-16699    : Supporting USB Compliance test	**need to update**
  * - MCCCC-17740    : avoid over voltage by abnormal charger
  * - TIME-3557      : Fake USB type to SDP on Factory cable.
  * - TIME-3721      : Disable CP charging in battery fake mode.
- * - TIME-5647      : Disable hiccup of otg in compliance mode
  * - TIME-6306      : Control Vbus2 regulator
  * - TIME-2558      : Compensate charging power on CP QC3.0
  *                    input probation for cp setup.
@@ -28,7 +27,6 @@
  * - TIME-4164      : Faster try APSD for HVDCP test
  * - TIME-4164      : Faster try QC 3.0 for 2nd charger test
  * - MCISSUE-12913  : Charging for mcdodo
- * - TIME-3887      : Compensate pps ta output error.
  * - TIME-4626      : abnormal operation during PPS TA CP Charing.
  */
 
@@ -36,8 +34,8 @@
 #define pr_wa(fmt, ...) pr_err(fmt, ##__VA_ARGS__)
 #define pr_dbg_wa(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
 
-#include <linux/delay.h>
 #include <linux/ctype.h>
+#include <linux/delay.h>
 #include <linux/pmic-voter.h>
 #include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
@@ -89,12 +87,20 @@ failed:
 
 bool wa_command_icl_override(/*@Nonnull*/ struct smb_charger* chg)
 {
+	char buff [16] = { 0, };
+	int fastpl = 0;
+
+	if (unified_nodes_show("support_fastpl", buff)
+			&& sscanf(buff, "%d", &fastpl) && fastpl == 1){
+		pr_wa("fastpl set %d return wa_command_icl_override\n", fastpl);
+		return false;
+	}
 	if (smblib_masked_write(chg, USBIN_CMD_ICL_OVERRIDE_REG,
 			ICL_OVERRIDE_BIT, ICL_OVERRIDE_BIT) < 0) {
 		pr_wa("Couldn't icl override\n");
 		return false;
 	}
-
+	pr_wa("success wa_command_icl_override\n");
 	return true;
 }
 
@@ -288,6 +294,7 @@ bool wa_detect_standard_hvdcp_check(void)
 	}
 
 	ext_chg = chg->ext_chg;
+
 	if (!ext_chg->enable_detect_standard_hvdcp)
 		return false;
 
@@ -484,8 +491,6 @@ static bool wa_charging_without_cc_required(struct smb_charger *chg)
 	union power_supply_propval val = { 0, };
 	bool pd_hard_reset, usb_vbus_high, typec_mode_none,	src_mode, wa_required;
 	struct ext_smb_charger *ext_chg;
-	char buff [16] = { 0, };
-	int fastpl = 0;
 
 	if (!chg) {
 		pr_wa("'chg' is not ready\n");
@@ -493,8 +498,6 @@ static bool wa_charging_without_cc_required(struct smb_charger *chg)
 	}
 
 	ext_chg = chg->ext_chg;
-	if (unified_nodes_show("support_fastpl", buff))
-		sscanf(buff, "%d", &fastpl);
 
 	pd_hard_reset = chg->pd_hard_reset;
 	usb_vbus_high = !power_supply_get_property(chg->usb_psy, POWER_SUPPLY_PROP_PRESENT, &val)
@@ -503,10 +506,10 @@ static bool wa_charging_without_cc_required(struct smb_charger *chg)
 	src_mode = chg->sink_src_mode != SRC_MODE;
 
 	wa_required = !pd_hard_reset && usb_vbus_high && typec_mode_none && src_mode
-				&& !fastpl && !ext_chg->wa_charging_without_cc_processed;
+				&& !ext_chg->wa_charging_without_cc_processed;
 	if (!wa_required)
-		pr_dbg_wa("Don't need CWC (pd_hard_reset:%d, usb_vbus_high:%d, typec_mode_none:%d, fastpl:%d)\n",
-			pd_hard_reset, usb_vbus_high, typec_mode_none, fastpl, wa_required);
+		pr_wa("Don't need CWC (pd_hard_reset:%d, usb_vbus_high:%d, typec_mode_none:%d, fastpl:%d)\n",
+			pd_hard_reset, usb_vbus_high, typec_mode_none, wa_required);
 
 	return wa_required;
 }
@@ -534,15 +537,21 @@ void wa_charging_without_cc_trigger(struct smb_charger *chg)
 	// Just check and register (if needed) the work in this call.
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
 	union power_supply_propval val = { 0, };
+	char buff [16] = { 0, };
+	int fastpl = 0;
 	bool vbus = !power_supply_get_property(chg->usb_psy, POWER_SUPPLY_PROP_PRESENT, &val)
 		? !!val.intval : false;
 
+	pr_wa("start wa_charging_without_cc_trigger . . .\n");
 	if (!ext_chg->enable_charging_without_cc)
 		return;
 
-	if (vbus && wa_charging_without_cc_required(chg)) {
+	if (unified_nodes_show("support_fastpl", buff))
+		sscanf(buff, "%d", &fastpl);
+
+	if (vbus && wa_charging_without_cc_required(chg) && (fastpl != 1)) {
 		if (delayed_work_pending(&ext_chg->wa_charging_without_cc_dwork)) {
-			pr_wa(" Cancel the pended trying apsd . . .\n");
+			pr_wa(" Cancel the pended trying apsd . . . vbus=%d, fastpl=%d\n", vbus, fastpl);
 			cancel_delayed_work(&ext_chg->wa_charging_without_cc_dwork);
 		}
 
@@ -1196,6 +1205,93 @@ void wa_clear_dc_reverse_volt_init(struct smb_charger* chg)
 
 }
 
+#define REVERSE_DELAY_MS		5000
+static void wa_clear_dc_reverse_volt_v2_func(struct work_struct *work)
+{
+	struct ext_smb_charger *ext_chg = container_of(work, struct ext_smb_charger,
+						wa_clear_dc_reverse_volt_v2_dwork.work);
+	struct smb_charger *chg = ext_chg->chg;
+	union power_supply_propval val = { .intval = 0, };
+	int wlc_pdt;
+	int rc = 0;
+	u8 status;
+
+	if (!chg->wls_psy) {
+		chg->wls_psy = power_supply_get_by_name("wireless");
+		if (!chg->wls_psy) {
+			pr_wa("'wls_psy' is no device\n");
+			return;
+		}
+	}
+
+	wlc_pdt = !power_supply_get_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_PIN_ENABLED, &val) ? val.intval : 0;
+
+	rc = smblib_read(chg, DCIN_BASE + INT_RT_STS_OFFSET, &status);
+	if (rc < 0) {
+		pr_wa("Couldn't read INT_RT_STS_OFFSET rc=%d\n", rc);
+	}
+
+	if (wlc_pdt && status == INT_ABNORMAL_OFFSET) {
+		pr_wa("wa_clear_dc_reverse_volt_trigger write!\n");
+
+		vote(chg->dc_reset_votable, DC_RESET_BY_VASHDN, true, 0);
+		vote(chg->dc_reset_votable, DC_RESET_BY_VASHDN, false, 0);
+	}
+}
+
+void wa_clear_dc_reverse_volt_v2_en_trigger(struct smb_charger* chg)
+{
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+
+	if (!ext_chg->enable_clear_dc_reverse_volt_v2)
+		return;
+
+	if (delayed_work_pending(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork))
+		cancel_delayed_work(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork);
+
+	schedule_delayed_work(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork,
+		round_jiffies_relative(msecs_to_jiffies(REVERSE_DELAY_MS)));
+}
+
+void wa_clear_dc_reverse_volt_v2_trigger(void)
+{
+	struct smb_charger* chg = wa_helper_chg();
+	struct ext_smb_charger *ext_chg;
+
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
+		return;
+	}
+
+	ext_chg = chg->ext_chg;
+
+	if (!ext_chg->enable_clear_dc_reverse_volt_v2)
+		return;
+
+	if (delayed_work_pending(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork))
+		cancel_delayed_work(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork);
+
+	schedule_delayed_work(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork, 0);
+}
+
+void wa_clear_dc_reverse_volt_v2_init(struct smb_charger* chg)
+{
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	struct device_node *node = chg->dev->of_node;
+	struct device_node *dnode =
+		of_find_node_by_name(node, "veneer-workaround");
+
+	ext_chg->enable_clear_dc_reverse_volt_v2 =
+		of_property_read_bool(dnode, "lge,enable-clear-dc-reverse-volt-v2");
+
+	if (!ext_chg->enable_clear_dc_reverse_volt_v2)
+		return;
+
+	INIT_DELAYED_WORK(&ext_chg->wa_clear_dc_reverse_volt_v2_dwork,
+			wa_clear_dc_reverse_volt_v2_func);
+}
+
 
 ////////////////////////////////////////////////////////////////////////////
 // LGE Workaround : Rerun DC AICL
@@ -1212,6 +1308,11 @@ static void wa_dcin_rerun_aicl_func(struct work_struct *work)
 	rc = smblib_get_charge_param(chg, &chg->param.dc_icl, &icl);
 	if (rc < 0) {
 		pr_wa("Couldn't get dc_icl value, rc=%d\n", rc);
+		return;
+	}
+
+	if (!chg->dc_icl_votable) {
+		pr_wa("Couldn't get dc_icl_votable\n");
 		return;
 	}
 
@@ -1269,37 +1370,60 @@ void wa_dcin_rerun_aicl_init(struct smb_charger* chg)
 // LGE Workaround : Recovery vashdn during wireless charging
 ////////////////////////////////////////////////////////////////////////////
 
-#define VASHDN_DELAY_MS		3000
+#define VASHDN_DELAY_MS		5000
 static void wa_recovery_vashdn_wireless_func(struct work_struct *work)
 {
 	struct ext_smb_charger *ext_chg = container_of(work, struct ext_smb_charger,
 						wa_recovery_vashdn_wireless_dwork.work);
 	struct smb_charger *chg = ext_chg->chg;
-	struct power_supply* wireless_psy = power_supply_get_by_name("wireless");
 	union power_supply_propval val = { .intval = 0, };
+	int dc_present, dc_online, wlc_present, wlc_vrect;
+	bool dc_vashdn, dc_pause;
 	u8 stat;
 
-	if (!wireless_psy) {
-		pr_wa("'wireless_psy' is not ready\n");
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
 		return;
 	}
 
-	if (chg) {
-		int dc_present = !smblib_get_prop_dc_present(chg, &val) ? val.intval : 0;
-		int dc_online = !smblib_get_prop_dc_online(chg, &val) ? val.intval : 0;
-		bool dc_vashdn = !smblib_read(chg, DCIN_BASE + INT_RT_STS_OFFSET, &stat)
-			? (stat & DCIN_VASHDN_RT_STS) : 0;
-		bool dc_pause = !smblib_read(chg, BATTERY_CHARGER_STATUS_1_REG, &stat)
-			? (stat & PAUSE_CHARGE) : 0;
-
-		if (dc_present && !dc_online && dc_vashdn && dc_pause) {
-			pr_wa("detection Vashdn wireless charging stop!\n");
-			val.intval = 2;
-			power_supply_set_property(wireless_psy,
-				POWER_SUPPLY_PROP_DEBUG_BATTERY, &val);
+	if (!chg->wls_psy) {
+		chg->wls_psy = power_supply_get_by_name("wireless");
+		if (!chg->wls_psy) {
+			pr_wa("'wls_psy' is no device\n");
+			return;
 		}
 	}
-	power_supply_put(wireless_psy);
+
+	dc_present = !smblib_get_prop_dc_present(chg, &val) ? val.intval : 0;
+	dc_online = !smblib_get_prop_dc_online(chg, &val) ? val.intval : 0;
+	dc_vashdn = !smblib_read(chg, DCIN_BASE + INT_RT_STS_OFFSET, &stat)
+			? (stat & DCIN_VASHDN_RT_STS) : 0;
+	dc_pause = !smblib_read(chg, BATTERY_CHARGER_STATUS_1_REG, &stat)
+			? (stat & PAUSE_CHARGE) : 0;
+	wlc_present = !power_supply_get_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_PRESENT, &val) ? val.intval : 0;
+	wlc_vrect = !power_supply_get_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_PIN_ENABLED, &val) ? val.intval : 0;
+
+	if (dc_present && !dc_online && dc_vashdn && dc_pause) {
+		pr_wa("detection Vashdn wireless charging stop!\n");
+#ifdef CONFIG_CHARGER_IDTP9222_V2
+		val.intval = DC_RESET_BY_RESTART;
+		power_supply_set_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_DC_RESET, &val);
+#else
+		val.intval = 2;
+		power_supply_set_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_DEBUG_BATTERY, &val);
+#endif
+	} else if (chg->dc_reset_votable
+			&& ext_chg->concurrency_otg_wlc
+			&& wlc_present && wlc_vrect
+			&& !dc_online && dc_vashdn && dc_pause) {
+		vote(chg->dc_reset_votable, DC_RESET_BY_VASHDN, true, 0);
+		vote(chg->dc_reset_votable, DC_RESET_BY_VASHDN, false, 0);
+	} else
+		;	// do nothing
 }
 
 void wa_recovery_vashdn_wireless_trigger(struct smb_charger* chg)
@@ -1331,6 +1455,62 @@ void wa_recovery_vashdn_wireless_init(struct smb_charger* chg)
 
 	INIT_DELAYED_WORK(&ext_chg->wa_recovery_vashdn_wireless_dwork,
 			wa_recovery_vashdn_wireless_func);
+}
+
+
+////////////////////////////////////////////////////////////////////////////
+// LGE Workaround : Avoid FOD status by certain wireless charger
+////////////////////////////////////////////////////////////////////////////
+
+void wa_avoid_fod_status_trigger(struct smb_charger* chg)
+{
+	struct ext_smb_charger *ext_chg;
+	union power_supply_propval val = { .intval = 0, };
+	int wlc_online, wlc_suspend, wlc_full;
+
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
+		return;
+	}
+
+	ext_chg = chg->ext_chg;
+	if (!ext_chg->enable_avoid_fod_status)
+		return;
+
+	if (!chg->wls_psy) {
+		chg->wls_psy = power_supply_get_by_name("wireless");
+		if (!chg->wls_psy) {
+			pr_wa("'wls_psy' is not ready\n");
+			return;
+		}
+	}
+
+	wlc_online = !power_supply_get_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_PRESENT, &val) ? val.intval : 0;
+	wlc_suspend = get_effective_result(chg->dc_suspend_votable);
+	wlc_full = !power_supply_get_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_CHARGE_DONE, &val) ? val.intval : 0;
+
+	if (wlc_online && wlc_suspend && wlc_full) {
+		pr_wa("Release dcin blocking during EoC!\n");
+		val.intval = 0;
+		power_supply_set_property(chg->wls_psy,
+			POWER_SUPPLY_PROP_CHARGE_DONE, &val);
+	}
+}
+
+void wa_avoid_fod_status_init(struct smb_charger* chg)
+{
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	struct device_node *node = chg->dev->of_node;
+	struct device_node *dnode =
+		of_find_node_by_name(node, "veneer-workaround");
+
+	ext_chg->enable_avoid_fod_status =
+		of_property_read_bool(dnode, "lge,enable-avoid-fod-status");
+
+	if (!ext_chg->enable_avoid_fod_status)
+		return;
 }
 
 
@@ -1608,8 +1788,14 @@ int wa_protect_overcharging(struct smb_charger* chg, int input_present)
 	}
 	stat = stat & BATTERY_CHARGER_STATUS_MASK;
 
+
+#ifdef CONFIG_QPNP_QG
+	if (!smblib_get_prop_from_bms(chg,
+			POWER_SUPPLY_PROP_VOLTAGE_MAX, &val)) {
+#else
 	if (!smblib_get_prop_from_bms(chg,
 			POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN, &val)) {
+#endif
 		upper_border = val.intval + ext_chg->prot_overchg_ent_dischg_off;
 		lower_border = val.intval - ext_chg->prot_overchg_rel_off;
 		if (stat == FULLON_CHARGE || stat == TAPER_CHARGE)
@@ -1627,6 +1813,7 @@ int wa_protect_overcharging(struct smb_charger* chg, int input_present)
 		if (input_present & INPUT_PRESENT_USB)
 			vote(chg->usb_icl_votable, CHG_TERMINATION_VOTER,
 					true, 0);
+
 		if (input_present & INPUT_PRESENT_DC)
 			vote(chg->dc_suspend_votable, CHG_TERMINATION_VOTER,
 					true, 0);
@@ -1982,15 +2169,18 @@ static void wa_faster_try_apsd_init(struct smb_charger *chg)
 #define WA_DEFAULT_VOLTAGE_MV          5000
 #define WA_QC30_STEP_MV                200
 #define FASTER_QC_VOTER        "FASTER_QC_VOTER"
-#define MIN_CP_CURRENT_UA		2000000
+#define MIN_QC_CP_CURRENT_UA		500000
+#define MIN_PD_CP_CURRENT_UA		2000000
 
 static void wa_faster_try_cp_qc30_trigger(struct smb_charger *chg)
 {
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
-	int vbat = 0, rc = 0;
+	int vbat = 0, rc = 0, iusb=0, vusb=0;
 	union power_supply_propval val = {0, };
 	char buff [16] = { 0, };
-	int  test;
+	int test = 0;
+	int comp_target = 0, comp_diff = 0;
+	static int comp_pulse_cnt = 0, comp_target_cnt = 0;
 
 	if (!ext_chg->enable_faster_try)
 		return;
@@ -2003,7 +2193,7 @@ static void wa_faster_try_cp_qc30_trigger(struct smb_charger *chg)
 		return;
 
 	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_PD) {
-		vote_override(chg->fcc_votable, FASTER_QC_VOTER, true, MIN_CP_CURRENT_UA);
+		vote_override(chg->fcc_votable, FASTER_QC_VOTER, true, MIN_PD_CP_CURRENT_UA);
 		return;
 	}
 
@@ -2015,7 +2205,8 @@ static void wa_faster_try_cp_qc30_trigger(struct smb_charger *chg)
 			chg->cp_disable_votable = find_votable("CP_DISABLE");
 		if (chg->cp_disable_votable)
 			vote_override(chg->cp_disable_votable, FASTER_QC_VOTER, true, 0);
-		vote_override(chg->fcc_votable, FASTER_QC_VOTER, true, MIN_CP_CURRENT_UA);
+		vote_override(chg->fcc_votable, FASTER_QC_VOTER, true, MIN_QC_CP_CURRENT_UA);
+		pr_info("vote fcc 500\n");
 		ext_chg->wa_faster_try_running = true;
 		vbat = !power_supply_get_property(chg->bms_psy,
 			POWER_SUPPLY_PROP_VOLTAGE_NOW, &val) ? val.intval/1000 : -1;
@@ -2023,6 +2214,8 @@ static void wa_faster_try_cp_qc30_trigger(struct smb_charger *chg)
 		ext_chg->wa_target_cnt = ((vbat * 2) + WA_COMP_CP_QC30_MARGIN_MV - WA_DEFAULT_VOLTAGE_MV) / WA_QC30_STEP_MV + 1;
 		if (ext_chg->wa_target_cnt > 20)
 			ext_chg->wa_target_cnt = 20;
+		comp_pulse_cnt = 0;
+		comp_target_cnt = ext_chg->wa_target_cnt;
 		pr_info("set target = %d, vbat = %d\n",	ext_chg->wa_target_cnt, vbat);
 	}
 
@@ -2031,6 +2224,31 @@ static void wa_faster_try_cp_qc30_trigger(struct smb_charger *chg)
 
 		rc = power_supply_set_property(
 			chg->batt_psy, POWER_SUPPLY_PROP_DP_DM, &val);
+		msleep(50);
+
+		iusb = !power_supply_get_property(chg->usb_psy,
+			POWER_SUPPLY_PROP_INPUT_CURRENT_NOW, &val) ? val.intval/1000 : -1;
+
+		vusb = !power_supply_get_property(chg->usb_psy,
+			POWER_SUPPLY_PROP_VOLTAGE_NOW, &val) ? val.intval/1000 : -1;
+
+		/* compensate wa_target_cnt */
+		comp_target = WA_DEFAULT_VOLTAGE_MV +
+			((chg->pulse_cnt - comp_pulse_cnt) * WA_QC30_STEP_MV);
+		if ((vusb - comp_target) < 0) {
+			comp_diff = comp_target - vusb;
+			comp_pulse_cnt = comp_pulse_cnt + (comp_diff / WA_QC30_STEP_MV) + 1;
+			ext_chg->wa_target_cnt = comp_target_cnt + comp_pulse_cnt;
+			if (ext_chg->wa_target_cnt > 25)
+				ext_chg->wa_target_cnt = 25;
+			pr_info(
+				"Compensate wa_target_cnt : target=%dmV, vusb=%dmV, "
+				"diff=%dmV, comp_cnt=%d, last wa_target_cnt=%d\n",
+				comp_target, vusb, comp_diff, comp_pulse_cnt, ext_chg->wa_target_cnt);
+		}
+
+		pr_info("Before DP Pulse iusb = %d, vusb = %d\n", iusb, vusb);
+
 	} else {
 		ext_chg->wa_target_cnt = 0;
 	}
@@ -2045,6 +2263,7 @@ static void wa_faster_try_cp_qc30_clear(struct smb_charger *chg)
 
 	ext_chg->wa_faster_try_running = false;
 	vote_override(chg->fcc_votable, FASTER_QC_VOTER, false, 0);
+	pr_info("clear fcc 500\n");
 
 	if (chg->cp_disable_votable)
 		vote_override(chg->cp_disable_votable, FASTER_QC_VOTER, false, 0);
@@ -2237,7 +2456,6 @@ static void wa_disable_otg_hiccup_init(struct smb_charger *chg)
 ////////////////////////////////////////////////////////////////////////////
 // LGE Workaround : Control Vbus2 regulator
 ////////////////////////////////////////////////////////////////////////////
-
 void wa_control_vbus2_regulator(struct smb_charger *chg, bool on)
 {
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
@@ -2247,9 +2465,11 @@ void wa_control_vbus2_regulator(struct smb_charger *chg, bool on)
 	if (on) {
 		gpiod_set_value(ext_chg->ds_en_gpio, 1);
 		gpiod_set_value(ext_chg->load_sw_on_gpio, 1);
+		pr_wa("'ds_en/load_sw_on set on\n");
 	} else {
 		gpiod_set_value(ext_chg->load_sw_on_gpio, 0);
 		gpiod_set_value(ext_chg->ds_en_gpio, 0);
+		pr_wa("'ds_en/load_sw_on set off\n");
 	}
 }
 
@@ -2293,6 +2513,7 @@ static void wa_control_vbus2_regulator_init(struct smb_charger *chg)
 		of_property_read_bool(dnode, "lge,enable-control-vbus2-regulator")
 		|| of_property_read_bool(dnode, property);
 
+	pr_wa("enable_control_vbus2_regulator=%d\n", ext_chg->enable_control_vbus2_regulator);
 	if (!ext_chg->enable_control_vbus2_regulator)
 		return;
 }
@@ -2305,14 +2526,19 @@ static void wa_control_vbus2_regulator_init(struct smb_charger *chg)
 #define CP_ILIM_STEP_UA                  100000
 
 #define WA_SMB1390_MIN_CURR_MA           550		/* MIN ILIM + 50mA */
-#define WA_SMB1390_DISABLE_CURR_MA       1800
+#define WA_SMB1390_DISABLE_CURR_MA       2300
 
 #define WA_COMP_CP_QC30_TRIGGER_DELAY    15000
 #define WA_COMP_CP_QC30_ILIM_DELAY       2000
 #define WA_COMP_CP_QC30_DP_DM_DELAY      5000
+#define WA_COMP_CP_QC30_MARGIN_MV        200
 #define WA_COMP_CP_QC30_MARGIN_MA        200
+#ifdef CONFIG_QPNP_QG
+#define WA_COMP_CP_QC30_MSOC_MAX        8400 /* 84% */
+#else
 #define WA_COMP_CP_QC30_MSOC_MAX         188 /* msoc: 73.7%, ui: 76% */
-#define WA_COMP_CP_QC30_BAD_ICP_MAX      3
+#endif
+#define WA_COMP_CP_QC30_BAD_ICP_MAX    3
 
 static void wa_comp_pwr_cp_qc30_clear(struct smb_charger *chg)
 {
@@ -2345,7 +2571,7 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 	struct smb_charger *chg = ext_chg->chg;
 	union power_supply_propval val = {0, };
 	int cp_enable = 0, cp_status1 = 0, cp_status2 = 0;
-	int soc = 0, icp_ma = 0, vusb = 0, vbat = 0, fcc = 0, ibat = 0;
+	int soc = 0, icp_ma = 0, vusb = 0, vbat = 0, fcc = 0, ibat = 0, iavg = 0, in_esr_process = 0;
 	int pulse_count = 0, rc = 0;
 	int cp_ilim = 0, cp_ilim_comp = 0;
 	int delay_ms = WA_COMP_CP_QC30_ILIM_DELAY;
@@ -2376,6 +2602,10 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 
 	ibat = !power_supply_get_property(chg->batt_psy,
 		POWER_SUPPLY_PROP_CURRENT_NOW, &val) ? val.intval/1000 : -1;
+	iavg = !power_supply_get_property(chg->bms_psy,
+		POWER_SUPPLY_PROP_CURRENT_AVG, &val) ? (val.intval *-1)/1000 : -1;
+	in_esr_process = !power_supply_get_property(chg->bms_psy,
+		POWER_SUPPLY_PROP_UPDATE_NOW, &val) ? (val.intval) : -1;
 	vusb = !power_supply_get_property(chg->usb_psy,
 		POWER_SUPPLY_PROP_VOLTAGE_NOW, &val) ? val.intval/1000 : -1;
 	vbat = !power_supply_get_property(chg->bms_psy,
@@ -2404,9 +2634,14 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 
 		veneer_voter_set(&ext_chg->cp_qc3_ibat, WA_SMB1390_DISABLE_CURR_MA);
 
+
 		pr_info("clear reason -> OVER SOC(max: %d=%d), now soc: %d=%d\n",
 			WA_COMP_CP_QC30_MSOC_MAX,
+#ifdef CONFIG_QPNP_QG
+			WA_COMP_CP_QC30_MSOC_MAX/100, soc, soc/100);
+#else
 			WA_COMP_CP_QC30_MSOC_MAX*100/255, soc, soc*100/255);
+#endif
 		return;
 	}
 
@@ -2481,9 +2716,15 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 
 		cp_ilim_comp = (fcc - ibat) / 2 / CP_ILIM_STEP_MA * CP_ILIM_STEP_UA;
 
-		if (cp_ilim_comp > CP_ILIM_STEP_UA)
-			cp_ilim_comp = CP_ILIM_STEP_UA;
-		else if (cp_ilim_comp < -CP_ILIM_STEP_UA)
+		if (cp_ilim_comp >= CP_ILIM_STEP_UA) {
+			if (in_esr_process) {
+				cp_ilim_comp = 0;
+				pr_info("CP ILIM hold -> cp_ilim=%d, fcc=%d, ibat=%d, iavg=%d, in_esr=%d\n",
+						cp_ilim / 1000, fcc, ibat, iavg, in_esr_process);
+			} else {
+				cp_ilim_comp = CP_ILIM_STEP_UA;
+			}
+		} else if (cp_ilim_comp < -CP_ILIM_STEP_UA)
 			cp_ilim_comp = -CP_ILIM_STEP_UA;
 
 		if (cp_ilim > 0 && fcc > 0 && ibat > 0 && cp_ilim_comp != 0) {
@@ -2494,10 +2735,10 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 				POWER_SUPPLY_PROP_INPUT_CURRENT_MAX, &val);
 
 			pr_info("CP ILIM %s -> new cp_ilim=%d, pulse=%d, status=0x%X,%X, "
-					"vbus=%d, vbat=%d, icp=%d, fcc=%d, ibat=%d, cp_ilim=%d\n",
+					"vbus=%d, vbat=%d, icp=%d, fcc=%d, ibat=%d, iavg=%d, cp_ilim=%d, in_esr=%d\n",
 					cp_ilim_comp > 0 ? "up" : "down",
 					val.intval / 1000, pulse_count, cp_status1, cp_status2,
-					vusb, vbat, icp_ma,	fcc, ibat, cp_ilim / 1000);
+					vusb, vbat, icp_ma,	fcc, ibat, iavg, cp_ilim / 1000, in_esr_process);
 
 			goto comp_cp_qc30_reschedule;
 		}
@@ -2518,9 +2759,9 @@ static void wa_comp_pwr_cp_qc30_work_func(struct work_struct *work)
 			chg->batt_psy, POWER_SUPPLY_PROP_DP_DM, &val);
 
 	pr_info("TA voltage up -> pulse=%d->%d, status=0x%X,%X, "
-			"vbus=%d, vbat=%d, icp=%d, fcc=%d, ibat=%d, bad_icp_cnt=%d\n",
+			"vbus=%d, vbat=%d, icp=%d, fcc=%d, ibat=%d, iavg=%d, bad_icp_cnt=%d\n",
 			pulse_count, pulse_count + 1, cp_status1, cp_status2,
-			vusb, vbat, icp_ma, fcc, ibat, ext_chg->bad_icp_cnt);
+			vusb, vbat, icp_ma, fcc, ibat, iavg, ext_chg->bad_icp_cnt);
 
 comp_cp_qc30_reschedule:
 
@@ -2581,433 +2822,23 @@ static void wa_comp_pwr_cp_qc30_init(struct smb_charger *chg)
 		&ext_chg->wa_comp_cp_qc30_dwork, wa_comp_pwr_cp_qc30_work_func);
 }
 
-
-////////////////////////////////////////////////////////////////////////////
-// LGE Workaround : input probation for cp setup.
-////////////////////////////////////////////////////////////////////////////
-#define WA_PROB_IBAT_1_DELAY        500
-#define WA_PROB_IBAT_2_DELAY        500
-#define WA_PROB_IBAT_DELAY_LIMIT    15000
-
-static void wa_probate_ibat_voter_trigger(struct smb_charger* chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-
-	if (!ext_chg->enable_prob_ibat_voter)
-		return;
-
-	if (!ext_chg->is_prob_ibat_voter &&
-		chg->pd_active == POWER_SUPPLY_PD_PPS_ACTIVE) {
-		ext_chg->is_prob_ibat_voter = true;
-
-		ext_chg->prob_ibat_limit = chg->batt_profile_fcc_ua / 10 * 6;
-		vote_override(chg->fcc_votable, "WA_PROBATE_IBAT",
-				true, ext_chg->prob_ibat_limit);
-
-		schedule_delayed_work(&ext_chg->wa_probate_ibat_voter_dwork,
-			msecs_to_jiffies(WA_PROB_IBAT_1_DELAY));
-
-		pr_info("effective voter: %dmA\n", ext_chg->prob_ibat_limit / 1000);
-	}
-}
-
-static void wa_probate_ibat_voter_clear(struct smb_charger *chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-
-	if (!ext_chg->enable_prob_ibat_voter)
-		return;
-
-	if (ext_chg->is_prob_ibat_voter) {
-		cancel_delayed_work(&ext_chg->wa_probate_ibat_voter_dwork);
-		vote_override(chg->fcc_votable, "WA_PROBATE_IBAT", false, 0);
-		ext_chg->is_prob_ibat_voter = false;
-		pr_info("clear probate ibat\n");
-	}
-}
-
-static void wa_probate_ibat_voter_reschedule(struct smb_charger* chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-
-	schedule_delayed_work(&ext_chg->wa_probate_ibat_voter_dwork,
-		msecs_to_jiffies(WA_PROB_IBAT_2_DELAY));
-}
-
-static void wa_probate_ibat_voter_work_func(struct work_struct *work)
-{
-	struct ext_smb_charger *ext_chg = container_of(work, struct ext_smb_charger,
-						wa_probate_ibat_voter_dwork.work);
-	struct smb_charger *chg = ext_chg->chg;
-	union power_supply_propval val = {0, };
-	int cp_status1 = 0, cp_status2 = 0;
-	static int work_count = 0;
-
-	if (!chg->cp_psy)
-		chg->cp_psy = power_supply_get_by_name("charge_pump_master");
-
-	if (!chg->cp_psy) {
-		wa_probate_ibat_voter_reschedule(chg);
-		return;
-	}
-
-	cp_status1 = !power_supply_get_property(
-		chg->cp_psy, POWER_SUPPLY_PROP_CP_STATUS1, &val) ? val.intval : 0;
-	cp_status2 = !power_supply_get_property(
-		chg->cp_psy, POWER_SUPPLY_PROP_CP_STATUS2, &val) ? val.intval : 0;
-
-	pr_info("%d: cp_status1: 0x%x, cp_status2: 0x%x, flag=%d\n",
-		work_count, cp_status1, cp_status2, ext_chg->is_prob_ibat_voter);
-
-	if (!ext_chg->is_prob_ibat_voter) {
-		work_count = 0;
-		wa_probate_ibat_voter_clear(chg);
-		return;
-	}
-
-	if ((cp_status1 == 0x4) && (cp_status2 == 0x80)) {
-		work_count = 0;
-		wa_probate_ibat_voter_clear(chg);
-	}
-	else {
-		work_count++;
-		if (WA_PROB_IBAT_DELAY_LIMIT
-			< (WA_PROB_IBAT_1_DELAY + (WA_PROB_IBAT_2_DELAY * work_count))) {
-			work_count = 0;
-			wa_probate_ibat_voter_clear(chg);
-		}
-		else
-			wa_probate_ibat_voter_reschedule(chg);
-	}
-}
-
-static void wa_probate_ibat_voter_init(struct smb_charger* chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-	struct device_node *node = chg->dev->of_node;
-	struct device_node *dnode =
-		of_find_node_by_name(node, "veneer-workaround");
-
-	if (!dnode)
-		ext_chg->enable_prob_ibat_voter = false;
-	else
-		ext_chg->enable_prob_ibat_voter =
-			of_property_read_bool(dnode, "lge,enable-probate-ibat-voter");
-
-	if (!ext_chg->enable_prob_ibat_voter)
-		return;
-
-	ext_chg->is_prob_ibat_voter = false;
-	INIT_DELAYED_WORK(&ext_chg->wa_probate_ibat_voter_dwork,
-			wa_probate_ibat_voter_work_func);
-}
-
-////////////////////////////////////////////////////////////////////////////
-// LGE Workaround : Compensate pps ta output error.
-////////////////////////////////////////////////////////////////////////////
-#define WA_COMP_PPS_PWR_MAX_ERROR         5       /*     500mA */
-#define WA_COMP_PPS_PWR_IBAT_LOW_MAX      3       /* max count */
-#define WA_COMP_PPS_PWR_LIMIT             2000    /*   2000 mA */
-/* It takes 5sec to change PPS TA power */
-#define WA_COMP_PPS_PWR_DELAY             5000    /*     5 sec */
-#define WA_COMP_PPS_PWR_IBAT_LOW_DELAY    3000    /*     3 sec */
-#define WA_COMP_PPS_PWR_MSOC_MAX          217     /* msoc: 85%, ui: 88% */
-
-static void unified_nodes_store_int(const char* key, int val)
-{
-	char buf[12] = "0";
-	snprintf(buf, sizeof(buf), "%d", val);
-	unified_nodes_store("pps_ta_count", buf, strlen(buf));
-}
-
-static void wa_comp_pps_pwr_trigger(struct smb_charger *chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-
-	if (!ext_chg->enable_comp_pps_pwr)
-		return;
-
-	if (!ext_chg->is_comp_pps_pwr) {
-		ext_chg->is_comp_pps_pwr = true;
-
-		ext_chg->comp_pps_pwr_fcc = 0;
-		ext_chg->comp_pps_pwr_count = 0;
-		unified_nodes_store_int("pps_ta_count", 0);
-		ext_chg->comp_pps_pwr_ibat_low_count = 0;
-		ext_chg->comp_pps_pwr_settled = 0;
-
-		ext_chg->comp_pps_pwr_effective_voter =
-				(char*) get_effective_client(chg->fcc_votable);
-
-		schedule_delayed_work(&ext_chg->wa_comp_pps_pwr_dwork,
-				msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-		pr_info("start. \n");
-	}
-}
-
-static void wa_comp_pps_pwr_clear(struct smb_charger *chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-
-	if (!ext_chg->enable_comp_pps_pwr)
-		return;
-
-	if (ext_chg->is_comp_pps_pwr) {
-		ext_chg->is_comp_pps_pwr = false;
-
-		ext_chg->comp_pps_pwr_fcc = 0;
-		ext_chg->comp_pps_pwr_count = 0;
-		unified_nodes_store_int("pps_ta_count", 0);
-		ext_chg->comp_pps_pwr_ibat_low_count = 0;
-		ext_chg->comp_pps_pwr_settled = 0;
-
-		veneer_voter_release(&ext_chg->cp_pps_ibat);
-		cancel_delayed_work(&ext_chg->wa_comp_pps_pwr_dwork);
-		pr_info("clear done!!\n");
-	}
-}
-
-static void wa_comp_pps_pwr_dwork_func(struct work_struct *work)
-{
-	struct ext_smb_charger *ext_chg = container_of(work,
-		struct ext_smb_charger, wa_comp_pps_pwr_dwork.work);
-	struct smb_charger *chg = ext_chg->chg;
-	union power_supply_propval val = {0, };
-	char buff[2] = { 0, };
-	char *client_voter = NULL;
-	int cp_enable = 0, cp_status1 = 0, cp_status2 = 0;
-	int ibat = 0, fcc = 0, original_fcc = 0;
-	int new_error = 0, settled_error = 0;
-	int icp_ma = 0, lcdon = 0, soc = 0;
-	int cmp_size = 0;
-	bool is_ibat_changed = false;
-
-	if (!chg->batt_psy)
-		chg->batt_psy = power_supply_get_by_name("battery");
-	if (!chg->cp_psy)
-		chg->cp_psy = power_supply_get_by_name("charge_pump_master");
-	if (!chg->bms_psy)
-		chg->bms_psy = power_supply_get_by_name("bms");
-
-	if (!ext_chg->is_comp_pps_pwr ||
-		chg->cp_reason != POWER_SUPPLY_CP_PPS) {
-		wa_comp_pps_pwr_clear(chg);
-		pr_info("clear reason -> NOT CP_PPS, flag=%d, reason=%d\n",
-			ext_chg->is_comp_pps_pwr, chg->cp_reason);
-		return;
-	}
-
-	if (!chg->cp_psy || !chg->batt_psy || !chg->bms_psy) {
-		schedule_delayed_work(
-			&ext_chg->wa_comp_pps_pwr_dwork,
-			msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-		return;
-	}
-
-	cp_enable = !power_supply_get_property(chg->cp_psy,
-		POWER_SUPPLY_PROP_CP_ENABLE, &val) ? val.intval : 0;
-	cp_status1 = !power_supply_get_property(chg->cp_psy,
-		POWER_SUPPLY_PROP_CP_STATUS1, &val) ? val.intval : 0;
-	cp_status2 = !power_supply_get_property(chg->cp_psy,
-		POWER_SUPPLY_PROP_CP_STATUS2, &val) ? val.intval : 0;
-	soc = !power_supply_get_property(chg->bms_psy,
-		POWER_SUPPLY_PROP_CAPACITY_RAW, &val) ? val.intval : -1;
-
-	if (!cp_enable ||
-		!((cp_status1 == 0x0C || cp_status1 == 0x04) && cp_status2 == 0x80)) {
-
-		if (soc < WA_COMP_PPS_PWR_MSOC_MAX) {
-			pr_info("retry reason -> CP STATUS, "
-					"soc=%d, en=%d, sts1=0x%x, sts2=0x%x\n",
-				soc*100/255, cp_enable, cp_status1, cp_status2);
-
-			schedule_delayed_work(
-				&ext_chg->wa_comp_pps_pwr_dwork,
-				msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-		}
-		else {
-			wa_comp_pps_pwr_clear(chg);
-			pr_info("clear reason -> OVER SOC & CP STATUS, "
-					"soc=%d, en=%d, sts1=0x%x, sts2=0x%x\n",
-				soc*100/255, cp_enable, cp_status1, cp_status2);
-		}
-
-		return;
-	}
-
-	if (unified_nodes_show("status_lcd", buff)) {
-		sscanf(buff, "%d", &lcdon);
-	}
-
-	client_voter = (char*) get_effective_client(chg->fcc_votable);
-
-	fcc = !power_supply_get_property(chg->batt_psy,
-		POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &val) ? val.intval / 1000 : -1;
-
-	original_fcc = fcc + (ext_chg->comp_pps_pwr_count * 100);
-
-	cmp_size = min(strlen(client_voter),
-					strlen(ext_chg->comp_pps_pwr_effective_voter));
-
-	is_ibat_changed = veneer_voter_changed(VOTER_TYPE_IBAT) ||
-						(original_fcc != ext_chg->comp_pps_pwr_fcc);
-	if (is_ibat_changed ||
-		strncmp(ext_chg->comp_pps_pwr_effective_voter, client_voter, cmp_size)) {
-		/* if fcc is changed, previous offset should be cleared. */
-		pr_info("retry reason -> new voter(%s) is appeared, "
-				"ibat_changed=%d, total=%d, fcc(%dmA->%dmA(original=%dmA)), old=%s\n",
-				client_voter,
-				is_ibat_changed, ext_chg->comp_pps_pwr_count,
-				ext_chg->comp_pps_pwr_fcc, fcc, original_fcc,
-				ext_chg->comp_pps_pwr_effective_voter);
-
-		ext_chg->comp_pps_pwr_count = 0;
-		unified_nodes_store_int("pps_ta_count", 0);
-		ext_chg->comp_pps_pwr_fcc = fcc;
-		ext_chg->comp_pps_pwr_settled = 0;
-		ext_chg->comp_pps_pwr_effective_voter = client_voter;
-
-		veneer_voter_release(&ext_chg->cp_pps_ibat);
-
-		schedule_delayed_work(
-			&ext_chg->wa_comp_pps_pwr_dwork,
-			msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-		return;
-	}
-
-	ibat = !power_supply_get_property(chg->batt_psy,
-		POWER_SUPPLY_PROP_CURRENT_NOW, &val) ? val.intval / 1000 : -1;
-
-	if ((ibat < WA_COMP_PPS_PWR_LIMIT) || (fcc <= 0)) {
-		icp_ma = !power_supply_get_property(chg->cp_psy,
-					POWER_SUPPLY_PROP_CP_ISNS, &val) ? val.intval/1000 : -1;
-
-		if (icp_ma < WA_SMB1390_MIN_CURR_MA && (lcdon == 0))
-			ext_chg->comp_pps_pwr_ibat_low_count++;
-
-		if (ext_chg->comp_pps_pwr_ibat_low_count > WA_COMP_PPS_PWR_IBAT_LOW_MAX) {
-			pr_info("clear reason -> ibat & icp is too low, "
-					"ibat=%dmA, fcc=%dmA, original=%dmA, icp_ma=%dmA, count=%d\n",
-					ibat, fcc, original_fcc, icp_ma,
-					ext_chg->comp_pps_pwr_ibat_low_count);
-
-			veneer_voter_set(
-				&ext_chg->cp_pps_ibat, WA_SMB1390_DISABLE_CURR_MA);
-
-			return;
-		}
-
-		pr_info("retry reason -> ibat is too low or fcc is under zero, "
-				"ibat=%dmA, fcc=%dmA, original=%dmA, icp=%dmA, count=%d\n",
-				ibat, fcc, original_fcc, icp_ma,
-				ext_chg->comp_pps_pwr_ibat_low_count);
-
-		schedule_delayed_work(
-			&ext_chg->wa_comp_pps_pwr_dwork,
-			msecs_to_jiffies(WA_COMP_PPS_PWR_IBAT_LOW_DELAY));
-
-		return;
-	}
-
-	new_error = ((ibat - original_fcc) + 50 ) / 100;
-	if (new_error <= 0) {
-		pr_info("retry reason -> no need compensation, "
-				"new=%d, total=%d, ibat=%dmA, fcc=%dmA, original=%dmA\n",
-				new_error, ext_chg->comp_pps_pwr_count, ibat, fcc, original_fcc);
-
-		schedule_delayed_work(
-			&ext_chg->wa_comp_pps_pwr_dwork,
-			msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-
-		return;
-	}
-
-	if (new_error > 1 )
-		new_error = 1;
-
-	ext_chg->comp_pps_pwr_count += new_error;
-	if (ext_chg->comp_pps_pwr_count > WA_COMP_PPS_PWR_MAX_ERROR) {
-		new_error = 0;
-		ext_chg->comp_pps_pwr_count = WA_COMP_PPS_PWR_MAX_ERROR;
-	}
-	unified_nodes_store_int("pps_ta_count", ext_chg->comp_pps_pwr_count);
-
-	settled_error = original_fcc - (ext_chg->comp_pps_pwr_count * 100);
-	if (settled_error < WA_COMP_PPS_PWR_LIMIT) {
-		pr_info("retry reason -> compensated fcc is under 2A, "
-				"ibat=%dmA, fcc %dmA -> %dmA(original=%dmA).\n",
-			ibat, fcc, settled_error, original_fcc);
-
-		schedule_delayed_work(
-			&ext_chg->wa_comp_pps_pwr_dwork,
-			msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-
-		return;
-	}
-
-	if (ext_chg->comp_pps_pwr_settled != settled_error) {
-		ext_chg->comp_pps_pwr_settled = settled_error;
-
-		veneer_voter_set(&ext_chg->cp_pps_ibat, settled_error);
-
-		ext_chg->comp_pps_pwr_effective_voter =
-				(char*) get_effective_client(chg->fcc_votable);
-
-		pr_info("compensated!!.. new=%d, total=%d, ibat=%dmA, "
-				"down fcc from %dmA -> %dmA(original=%dmA).\n",
-			 new_error, ext_chg->comp_pps_pwr_count, ibat,
-			 fcc, settled_error, original_fcc);
-	}
-
-	ext_chg->comp_pps_pwr_ibat_low_count = 0;
-
-	schedule_delayed_work(
-		&ext_chg->wa_comp_pps_pwr_dwork,
-		msecs_to_jiffies(WA_COMP_PPS_PWR_DELAY));
-}
-
-static void wa_comp_pps_pwr_init(struct smb_charger *chg)
-{
-	struct ext_smb_charger *ext_chg = chg->ext_chg;
-	struct device_node *node = chg->dev->of_node;
-	struct device_node *dnode =
-		of_find_node_by_name(node, "veneer-workaround");
-
-	if (!dnode)
-		ext_chg->enable_comp_pps_pwr = false;
-	else
-		ext_chg->enable_comp_pps_pwr =
-			of_property_read_bool(dnode, "lge,enable-comp-pps-pwr");
-
-	if (!ext_chg->enable_comp_pps_pwr)
-		return;
-
-	ext_chg->comp_pps_pwr_fcc = 0;
-	ext_chg->comp_pps_pwr_count = 0;
-	unified_nodes_store_int("pps_ta_count", 0);
-	ext_chg->comp_pps_pwr_ibat_low_count = 0;
-	ext_chg->is_comp_pps_pwr = false;
-	ext_chg->comp_pps_pwr_settled = 0;
-
-	INIT_DELAYED_WORK(
-		&ext_chg->wa_comp_pps_pwr_dwork, wa_comp_pps_pwr_dwork_func);
-}
-
 ////////////////////////////////////////////////////////////////////////////
 // LGE Workaround : abnormal operation during PPS TA CP Charing
 ////////////////////////////////////////////////////////////////////////////
-#define WA_BAD_PPS_TA_DELAY            5000  /* 5sec           */
-
-#if defined(CONFIG_MACH_KONA_TIMELM_DCM_JP) || \
-	defined(CONFIG_MACH_KONA_TIMELM_SB_JP)
+#define WA_BAD_PPS_TA_DELAY            5000  /* 5sec               */
+#if defined(CONFIG_MACH_LITO_CAYMANLM_DCM_JP) || \
+	defined(CONFIG_MACH_LITO_CAYMANLM_SB_JP)
 #define WA_BAD_PPS_TA_MAX_COUNT        3     /* it means 30sec */
 #else
 #define WA_BAD_PPS_TA_MAX_COUNT        6     /* it means 30sec */
 #endif
-
-#define WA_CP_MIN_CURRENT_MA           2000  /* 2A             */
-#define WA_BAD_PPS_TA_MAX_VOLT_MV      9500  /* 9.5V           */
-#define WA_BAD_PPS_TA_MIN_VOLT_MV      7500  /* 7.5V           */
+#define WA_CP_MIN_CURRENT_MA           2000  /* 2A                 */
+#define WA_BAD_PPS_TA_MAX_VOLT_MV      9500  /* 9.5V               */
+#define WA_BAD_PPS_TA_MIN_VOLT_MV      7500  /* 7.5V               */
+#define WA_BAD_PPS_TA_SOC_MAX          8500  /* 85%                */
+#define WA_BAD_PPS_TA_MSOC_MAX         217   /* msoc: 85%, ui: 88% */
+#define BAD_PPS_TA_RECOVER_VOTER       "BAD_PPS_RECOVER_VOTER"
+#define BAD_PPS_TA_RECOVER_CURRENT     3000000  /* 3A                 */
 
 bool is_bad_pps_detected(void){
 	struct smb_charger* chg = wa_helper_chg();
@@ -3019,8 +2850,8 @@ bool is_bad_pps_detected(void){
 	}
 	ext_chg = chg->ext_chg;
 	if (ext_chg->bad_pps_ta_detected){
-#if defined(CONFIG_MACH_KONA_TIMELM_DCM_JP) || \
-	defined(CONFIG_MACH_KONA_TIMELM_SB_JP)
+#if defined(CONFIG_MACH_LITO_CAYMANLM_DCM_JP) || \
+	defined(CONFIG_MACH_LITO_CAYMANLM_SB_JP)
 		ret =  true;
 #endif
 		pr_info("is_bad_pps_detected flag true..\n");
@@ -3037,9 +2868,9 @@ static void wa_bad_operation_pps_ta_trigger(struct smb_charger* chg)
 		return;
 
 	if (chg->cp_disable_votable)
-		vote(chg->cp_disable_votable, "BAD_PPS_WA", false, 0);
+		vote(chg->cp_disable_votable, BAD_PPS_TA_RECOVER_VOTER, false, 0);
 	if (chg->fcc_votable)
-		vote(chg->fcc_votable, "BAD_PPS_WA", false, 0);
+		vote(chg->fcc_votable, BAD_PPS_TA_RECOVER_VOTER, false, 0);
 
 	if (!ext_chg->is_bad_operation_pps_ta) {
 		ext_chg->is_bad_operation_pps_ta = true;
@@ -3060,19 +2891,14 @@ static void wa_bad_operation_pps_ta_clear(struct smb_charger *chg)
 		return;
 
 	if (chg->cp_disable_votable)
-		vote(chg->cp_disable_votable, "BAD_PPS_WA", false, 0);
+		vote(chg->cp_disable_votable, BAD_PPS_TA_RECOVER_VOTER, false, 0);
 	if (chg->fcc_votable)
-		vote(chg->fcc_votable, "BAD_PPS_WA", false, 0);
+		vote(chg->fcc_votable, BAD_PPS_TA_RECOVER_VOTER, false, 0);
 
 	if (ext_chg->is_bad_operation_pps_ta) {
 		ext_chg->is_bad_operation_pps_ta = false;
 		ext_chg->bad_operation_pps_ta_count = 0;
 		cancel_delayed_work(&ext_chg->wa_bad_operation_pps_ta_dwork);
-#if defined(CONFIG_MACH_KONA_TIMELM_DCM_JP) || \
-	defined(CONFIG_MACH_KONA_TIMELM_SB_JP)
-		if (chg->cp_disable_votable)
-			vote_override(chg->cp_disable_votable, "BAD_PPS_WA", false, 0);
-#endif
 		pr_info("clear bad pps ta..\n");
 	}
 }
@@ -3083,14 +2909,20 @@ static void wa_bad_operation_pps_ta_work_func(struct work_struct *work)
 						wa_bad_operation_pps_ta_dwork.work);
 	struct smb_charger *chg = ext_chg->chg;
 	union power_supply_propval val = {0, };
-	int vusb_mv = 0, fcc_ma = 0, fcc_main_ma = 0, soc = 0;
+	int vusb_mv = 0, ibat_ma = 0, fcc_ma = 0, fcc_main_ma = 0, soc = 0;
+	int cp_status1 = 0, cp_status2 = 0;
 
 	if (!chg->usb_psy)
 		chg->usb_psy = power_supply_get_by_name("usb");
 	if (!chg->bms_psy)
 		chg->bms_psy = power_supply_get_by_name("bms");
+	if (!chg->batt_psy)
+		chg->batt_psy = power_supply_get_by_name("battery");
+	if (!chg->cp_psy)
+		chg->cp_psy = power_supply_get_by_name("charge_pump_master");
 
-	if (!chg->usb_psy || !chg->bms_psy || !chg->fcc_votable || !chg->fcc_main_votable) {
+	if (!chg->usb_psy || !chg->bms_psy || !chg->batt_psy || !chg->cp_psy ||
+	    !chg->fcc_votable || !chg->fcc_main_votable || !chg->cp_disable_votable) {
 		schedule_delayed_work(
 			&ext_chg->wa_bad_operation_pps_ta_dwork,
 			msecs_to_jiffies(WA_BAD_PPS_TA_DELAY));
@@ -3107,18 +2939,33 @@ static void wa_bad_operation_pps_ta_work_func(struct work_struct *work)
 
 	vusb_mv = !power_supply_get_property(
 		chg->usb_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &val) ? val.intval/1000 : -1;
+	/* ibat_ma = +: charging, -: discharging */
+	ibat_ma = !power_supply_get_property(
+		chg->batt_psy, POWER_SUPPLY_PROP_CURRENT_NOW, &val) ? val.intval/1000 : -1;
 	fcc_ma = get_effective_result_locked(chg->fcc_votable) / 1000;
 	fcc_main_ma = get_effective_result_locked(chg->fcc_main_votable) / 1000;
 	soc = !power_supply_get_property(chg->bms_psy,
 		POWER_SUPPLY_PROP_CAPACITY_RAW, &val) ? val.intval : -1;
+	cp_status1 = !power_supply_get_property(chg->cp_psy,
+		POWER_SUPPLY_PROP_CP_STATUS1, &val) ? val.intval : 0;
+	cp_status2 = !power_supply_get_property(chg->cp_psy,
+		POWER_SUPPLY_PROP_CP_STATUS2, &val) ? val.intval : 0;
 
-	if (soc > WA_COMP_PPS_PWR_MSOC_MAX) {
+#ifdef CONFIG_QPNP_QG
+	if (soc > WA_BAD_PPS_TA_SOC_MAX) {
+		wa_bad_operation_pps_ta_clear(chg);
+		pr_info("clear reason -> OVER SOC, soc=%d, flag=%d, reason=%d\n",
+			soc/100, ext_chg->is_bad_operation_pps_ta, chg->cp_reason);
+		return;
+	}
+#else
+	if (soc > WA_BAD_PPS_TA_MSOC_MAX) {
 		wa_bad_operation_pps_ta_clear(chg);
 		pr_info("clear reason -> OVER SOC, soc=%d, flag=%d, reason=%d\n",
 			soc*100/255, ext_chg->is_bad_operation_pps_ta, chg->cp_reason);
 		return;
 	}
-
+#endif
 	if ((vusb_mv > WA_BAD_PPS_TA_MAX_VOLT_MV) ||
 		(vusb_mv > WA_BAD_PPS_TA_MIN_VOLT_MV &&
 		 fcc_ma >= WA_CP_MIN_CURRENT_MA && fcc_ma == fcc_main_ma)) {
@@ -3128,15 +2975,7 @@ static void wa_bad_operation_pps_ta_work_func(struct work_struct *work)
 				vusb_mv, fcc_ma, fcc_main_ma);
 			wa_bad_operation_pps_ta_clear(chg);
 			ext_chg->bad_pps_ta_detected = true;
-#if defined(CONFIG_MACH_KONA_TIMELM_DCM_JP) || \
-	defined(CONFIG_MACH_KONA_TIMELM_SB_JP)
-			if (chg->cp_disable_votable)
-				vote_override(chg->cp_disable_votable, "BAD_PPS_WA", true, 0);
-			if (chg->fcc_votable)
-				vote_override(chg->fcc_votable, "BAD_PPS_WA", true, 3000000);
-#else
 			do_pd_hard_reset();
-#endif
 		}
 		else {
 			pr_info("one more check..count=%d, vusb=%dmV, fcc=%dmA, fcc_main=%dmA\n",
@@ -3146,6 +2985,42 @@ static void wa_bad_operation_pps_ta_work_func(struct work_struct *work)
 				msecs_to_jiffies(WA_BAD_PPS_TA_DELAY));
 		}
 		return;
+	}
+
+	/* NEXT - 604NB TA */
+	if (!get_effective_result_locked(chg->cp_disable_votable) &&
+	    !(cp_status1 == BIT(2) && cp_status2 == BIT(7)) &&
+		fcc_ma >= WA_CP_MIN_CURRENT_MA &&
+		ibat_ma < (fcc_main_ma + 200) &&
+		ibat_ma > (fcc_main_ma - 200)) {
+		ext_chg->bad_operation_pps_ta_count++;
+		if (ext_chg->bad_operation_pps_ta_count >= WA_BAD_PPS_TA_MAX_COUNT) {
+			pr_info("CP_PPS is disabled...status=(0x%X,0x%X), "
+					"vusb=%dmV, ibat=%dmA, fcc=%dmA, fcc_main=%dmA\n",
+				cp_status1, cp_status2, vusb_mv, ibat_ma, fcc_ma, fcc_main_ma);
+			if (chg->cp_disable_votable)
+				vote(chg->cp_disable_votable, BAD_PPS_TA_RECOVER_VOTER,
+					true, 0);
+			if (chg->fcc_votable)
+				vote(chg->fcc_votable, BAD_PPS_TA_RECOVER_VOTER,
+					true, BAD_PPS_TA_RECOVER_CURRENT);
+		}
+		else {
+			pr_info("one more check..count=%d, status=(0x%X, 0x%X), "
+					"vusb=%dmV, ibat=%dmA, fcc=%dmA, fcc_main=%dmA\n",
+				ext_chg->bad_operation_pps_ta_count, cp_status1, cp_status2,
+				vusb_mv, ibat_ma, fcc_ma, fcc_main_ma);
+			schedule_delayed_work(
+				&ext_chg->wa_bad_operation_pps_ta_dwork,
+				msecs_to_jiffies(WA_BAD_PPS_TA_DELAY));
+		}
+		return;
+	}
+	if (ext_chg->bad_operation_pps_ta_count > 0) {
+		pr_info("clear reason -> out of range : count=%d, status=(0x%X, 0x%X), "
+				"vusb=%dmV, ibat=%dmA, fcc=%dmA, fcc_main=%dmA\n",
+			ext_chg->bad_operation_pps_ta_count, cp_status1, cp_status2,
+			vusb_mv, ibat_ma, fcc_ma, fcc_main_ma);
 	}
 
 	ext_chg->bad_operation_pps_ta_count = 0;
@@ -3175,6 +3050,214 @@ static void wa_bad_operation_pps_ta_init(struct smb_charger* chg)
 	INIT_DELAYED_WORK(&ext_chg->wa_bad_operation_pps_ta_dwork,
 			wa_bad_operation_pps_ta_work_func);
 }
+
+
+////////////////////////////////////////////////////////////////////////////
+// LGE Workaround : Support concurrency mode between OTG and WLC
+////////////////////////////////////////////////////////////////////////////
+
+#define OTG_WLC_VOTER		"OTG_WLC_VOTER"
+bool wa_get_concurrency_mode_for_otg_wlc(void)
+{
+	struct smb_charger* chg = wa_helper_chg();
+	struct ext_smb_charger *ext_chg;
+
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
+		return false;
+	}
+
+	ext_chg = chg->ext_chg;
+	if (!ext_chg) {
+		pr_wa("'ext_chg' is not ready\n");
+		return false;
+	}
+
+	return ext_chg->concurrency_otg_wlc;
+}
+
+void wa_concurrency_mode_on(void)
+{
+	struct smb_charger* chg = wa_helper_chg();
+	struct ext_smb_charger *ext_chg;
+	int rc = 0;
+
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
+		return;
+	}
+
+	ext_chg = chg->ext_chg;
+
+	if (ext_chg->enable_concurrency_otg_wlc
+		&& (chg->typec_mode == POWER_SUPPLY_TYPEC_SINK
+			|| chg->typec_mode == POWER_SUPPLY_TYPEC_SINK_POWERED_CABLE)) {
+		pr_wa("boost ic on\n");
+
+		rc = smblib_write(chg, USBIN_ADAPTER_ALLOW_CFG_REG, USBIN_ADAPTER_ALLOW_12V);
+		if (rc < 0) {
+			pr_wa("Couldn't write to USBIN_ADAPTER_ALLOW_CFG_REG rc=%d\n", rc);
+		}
+		vote(chg->usb_icl_votable, OTG_WLC_VOTER, true, 0);
+		usleep_range(100, 110);
+		gpiod_set_value(ext_chg->otg_wlc_en_gpio, 1);
+		usleep_range(100, 110);
+		gpiod_set_value(ext_chg->otg_wlc_on_gpio, 1);
+
+		ext_chg->concurrency_otg_wlc = true;
+
+		if (delayed_work_pending(&ext_chg->wa_concurrency_regulator_on_dwork))
+			cancel_delayed_work(&ext_chg->wa_concurrency_regulator_on_dwork);
+		if (delayed_work_pending(&ext_chg->wa_concurrency_regulator_off_dwork))
+			cancel_delayed_work(&ext_chg->wa_concurrency_regulator_off_dwork);
+
+		schedule_delayed_work(
+			&ext_chg->wa_concurrency_regulator_off_dwork,
+			msecs_to_jiffies(100));
+	}
+}
+
+void wa_concurrency_mode_off(void)
+{
+	struct smb_charger* chg = wa_helper_chg();
+	struct ext_smb_charger *ext_chg;
+
+	if (!chg) {
+		pr_wa("'chg' is not ready\n");
+		return;
+	}
+
+	ext_chg = chg->ext_chg;
+
+	if (ext_chg->enable_concurrency_otg_wlc
+		&& ext_chg->concurrency_otg_wlc) {
+		pr_wa("regulator on\n");
+
+		smblib_vbus_regulator_enable(chg->vbus_vreg->rdev);
+		wa_control_vbus2_regulator(chg, true);
+
+		if (delayed_work_pending(&ext_chg->wa_concurrency_regulator_on_dwork))
+			cancel_delayed_work(&ext_chg->wa_concurrency_regulator_on_dwork);
+		if (delayed_work_pending(&ext_chg->wa_concurrency_regulator_off_dwork))
+			cancel_delayed_work(&ext_chg->wa_concurrency_regulator_off_dwork);
+
+		schedule_delayed_work(
+			&ext_chg->wa_concurrency_regulator_on_dwork,
+			msecs_to_jiffies(100));
+	}
+}
+
+static void wa_concurrency_regulator_on_func(struct work_struct *work)
+{
+	struct ext_smb_charger *ext_chg = container_of(work, struct ext_smb_charger,
+						wa_concurrency_regulator_on_dwork.work);
+	struct smb_charger *chg = ext_chg->chg;
+	int rc = 0;
+
+	pr_wa("boost ic off\n");
+
+	gpiod_set_value(ext_chg->otg_wlc_en_gpio, 0);
+	usleep_range(100, 110);
+	gpiod_set_value(ext_chg->otg_wlc_on_gpio, 0);
+
+	vote(chg->usb_icl_votable, OTG_WLC_VOTER, false, 0);
+	rc = smblib_write(chg, USBIN_ADAPTER_ALLOW_CFG_REG,
+			USBIN_ADAPTER_ALLOW_5V_OR_9V_TO_12V);
+	if (rc < 0) {
+		pr_err("Couldn't write to USBIN_ADAPTER_ALLOW_CFG_REG rc=%d\n", rc);
+	}
+
+	ext_chg->concurrency_otg_wlc = false;
+}
+
+static void wa_concurrency_regulator_off_func(struct work_struct *work)
+{
+	struct ext_smb_charger *ext_chg = container_of(work, struct ext_smb_charger,
+						wa_concurrency_regulator_off_dwork.work);
+	struct smb_charger *chg = ext_chg->chg;
+
+	pr_wa("regulator off\n");
+
+	wa_control_vbus2_regulator(chg, false);
+	smblib_vbus_regulator_disable(chg->vbus_vreg->rdev);
+}
+
+static void wa_concurrency_mode_for_otg_wlc(struct smb_charger* chg)
+{
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	struct device_node *node = chg->dev->of_node;
+	struct device_node *dnode =
+		of_find_node_by_name(node, "veneer-workaround");
+	struct pinctrl* gpio_pinctrl;
+	struct pinctrl_state* gpio_state;
+	int rc, gpio = 0;
+
+	if (!dnode)
+		ext_chg->enable_concurrency_otg_wlc = false;
+	else
+		ext_chg->enable_concurrency_otg_wlc =
+			of_property_read_bool(dnode, "lge,enable-concurrency-otg-wlc");
+
+	if (!ext_chg->enable_concurrency_otg_wlc)
+		return;
+
+	gpio_pinctrl = devm_pinctrl_get(chg->dev);
+	if (IS_ERR_OR_NULL(gpio_pinctrl)) {
+		pr_err("Failed to get pinctrl (%ld)\n", PTR_ERR(gpio_pinctrl));
+		goto fail_concurrency_mode;
+	}
+
+	gpio_state = pinctrl_lookup_state(gpio_pinctrl, "wlc_otg_pinctrl");
+	if (IS_ERR_OR_NULL(gpio_state)) {
+		pr_err("pinstate not found, %ld\n", PTR_ERR(gpio_state));
+		goto fail_concurrency_mode;
+	}
+
+	rc = pinctrl_select_state(gpio_pinctrl, gpio_state);
+	if (rc < 0) {
+		pr_err("cannot set pins %d\n", rc);
+		goto fail_concurrency_mode;
+	}
+
+	gpio = of_get_named_gpio(node, "lge,wireless-otg-en", 0);
+	if (!gpio_is_valid(gpio)) {
+		pr_err("Fail to get wireless-otg-en gpio\n");
+		goto fail_concurrency_mode;
+	}
+
+	rc = devm_gpio_request_one(chg->dev, gpio,
+			GPIOF_OUT_INIT_LOW, "wlc_otgen");
+	if (rc) {
+		pr_err("can't request wireless-otg-en gpio %d\n", gpio);
+		goto fail_concurrency_mode;
+	}
+	ext_chg->otg_wlc_en_gpio = gpio_to_desc(gpio);
+
+	gpio = of_get_named_gpio(node, "lge,wireless-otg-on", 0);
+	if (!gpio_is_valid(gpio)) {
+		pr_err("Fail to get wireless-otg-on gpio\n");
+		goto fail_concurrency_mode;
+	}
+
+	rc = devm_gpio_request_one(chg->dev, gpio,
+			GPIOF_OUT_INIT_LOW, "wlc_otgon");
+	if (rc) {
+		pr_err("can't request wireless-otg-on gpio %d\n", gpio);
+		goto fail_concurrency_mode;
+	}
+	ext_chg->otg_wlc_on_gpio = gpio_to_desc(gpio);
+
+	INIT_DELAYED_WORK(&ext_chg->wa_concurrency_regulator_on_dwork,
+		wa_concurrency_regulator_on_func);
+	INIT_DELAYED_WORK(&ext_chg->wa_concurrency_regulator_off_dwork,
+		wa_concurrency_regulator_off_func);
+
+	return;
+
+fail_concurrency_mode:
+	ext_chg->enable_concurrency_otg_wlc = false;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////
 // LGE Workaround : Helper functions init
@@ -3256,7 +3339,6 @@ void wa_update_pmic_reg_with_complice_mode(struct smb_charger* chg)
 int wa_typec_state_change_nb(struct notifier_block *nb, unsigned long empty, void *v)
 {
 	struct smb_charger *chg = v;
-
 	wa_charging_without_cc_trigger(chg);
 	wa_charging_with_rd_trigger(chg);
 	wa_retry_vconn_enable_on_vconn_oc_clear(chg);
@@ -3301,8 +3383,6 @@ int wa_usbin_plugin_nb(struct notifier_block *nb, unsigned long vbus, void *v)
 		wa_fake_usb_type_with_factory_clear(chg);
 		wa_retry_apsd_with_factory_clear(chg);
 		wa_recover_cc_status_trigger(chg);
-		wa_probate_ibat_voter_clear(chg);
-		wa_comp_pps_pwr_clear(chg);
 		wa_bad_operation_pps_ta_clear(chg);
 		chg->ext_chg->bad_pps_ta_detected = false;
 	}
@@ -3315,8 +3395,6 @@ int wa_source_change_nb(struct notifier_block *nb, unsigned long empty, void *v)
 	struct smb_charger *chg = v;
 
 	wa_comp_pwr_cp_qc30_trigger(chg);
-	wa_comp_pps_pwr_trigger(chg);
-	wa_probate_ibat_voter_trigger(chg);
 	wa_detect_standard_hvdcp_trigger(chg);
 	wa_rerun_apsd_for_dcp_triger(chg);
 	wa_rerun_apsd_for_sdp_triger(chg);
@@ -3373,7 +3451,6 @@ void wa_update_hall_ic(bool hall_ic)
 
 	ext_chg->is_hall_ic = hall_ic;
 }
-
 void wa_helper_init(struct smb_charger *chg)
 {
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
@@ -3392,8 +3469,10 @@ void wa_helper_init(struct smb_charger *chg)
 	wa_charging_with_rd_init(chg);
 	wa_clear_pr_without_charger_init(chg);
 	wa_clear_dc_reverse_volt_init(chg);
+	wa_clear_dc_reverse_volt_v2_init(chg);
 	wa_dcin_rerun_aicl_init(chg);
 	wa_recovery_vashdn_wireless_init(chg);
+	wa_avoid_fod_status_init(chg);
 	wa_retry_vconn_enable_on_vconn_oc_init(chg);
 	wa_retry_ok_to_pd_init(chg);
 	wa_avoid_inrush_current_init(chg);
@@ -3408,9 +3487,8 @@ void wa_helper_init(struct smb_charger *chg)
 	wa_disable_otg_hiccup_init(chg);
 	wa_control_vbus2_regulator_init(chg);
 	wa_comp_pwr_cp_qc30_init(chg);
-	wa_probate_ibat_voter_init(chg);
-	wa_comp_pps_pwr_init(chg);
 	wa_bad_operation_pps_ta_init(chg);
+	wa_concurrency_mode_for_otg_wlc(chg);
 
 	ext_chg->wa_source_change_nb.notifier_call = wa_source_change_nb;
 	ext_chg->wa_usbin_plugin_nb.notifier_call = wa_usbin_plugin_nb;
@@ -3433,6 +3511,4 @@ void wa_helper_init(struct smb_charger *chg)
 
 	veneer_voter_register(
         &ext_chg->cp_qc3_ibat, "CP_QC3", VOTER_TYPE_IBAT, false);
-	veneer_voter_register(
-        &ext_chg->cp_pps_ibat, "CP_PPS", VOTER_TYPE_IBAT, false);
 }

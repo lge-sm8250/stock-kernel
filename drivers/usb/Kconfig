@@ -210,3 +210,4 @@ config USB_ULPI_BUS
 endif # USB_SUPPORT
 
 source "drivers/usb/Kconfig.lge"
+source "drivers/usb/sls11hc/Kconfig"

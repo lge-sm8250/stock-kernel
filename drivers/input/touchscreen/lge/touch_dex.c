@@ -69,7 +69,6 @@ int dex_input_init(struct device *dev)
 error_register:
 	input_mt_destroy_slots(ts->input_dex);
 	input_free_device(ts->input_dex);
-
 	return ret;
 }
 
@@ -92,7 +91,7 @@ static int dex_area_filter(struct device *dev, int id)
 	}
 }
 
-/* Input Dex in Touch core 
+/* Input Dex in Touch core
  * This function is not support changing ts->mask
  * */
 void dex_input_handler(struct device *dev, struct input_dev *input)

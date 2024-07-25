@@ -626,7 +626,7 @@ static int update_sys_frequency
 {
 	void __user *argp = (void __user *)arg;
 	int ret = 0;
-	struct sys_cmd_freq_req freq;
+	struct sys_cmd_freq_req freq = {{0,},{0,},};
 
 	ret = copy_from_user(&freq,
 				argp,

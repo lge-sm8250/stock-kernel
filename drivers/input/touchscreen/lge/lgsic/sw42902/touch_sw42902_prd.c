@@ -1136,7 +1136,7 @@ static int prd_compare_rawdata(struct device *dev, u8 type, int *result)
 		        }
 	        }
         }
-            
+
         return ret;
 	case OPEN_RX_NODE_TEST:
 	case OPEN_TX_NODE_TEST:

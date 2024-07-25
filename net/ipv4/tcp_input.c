@@ -85,6 +85,8 @@
 #include <linux/static_key.h>
 #include <net/busy_poll.h>
 
+#include <soc/qcom/lge/board_lge.h>
+
 int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 
 #ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
@@ -6332,15 +6334,15 @@ discard:
 		}
 
 #ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
-		if (mptcp(tp)) {
-			tp->tcp_header_len += MPTCP_SUB_LEN_DSM_ALIGN;
-			tp->advmss -= MPTCP_SUB_LEN_DSM_ALIGN;
-		}
+        if (mptcp(tp)) {
+            tp->tcp_header_len += MPTCP_SUB_LEN_DSM_ALIGN;
+            tp->advmss -= MPTCP_SUB_LEN_DSM_ALIGN;
+        }
 
 #endif
         WRITE_ONCE(tp->rcv_nxt, TCP_SKB_CB(skb)->seq + 1);
-        tp->copied_seq = tp->rcv_nxt;
-        tp->rcv_wup = TCP_SKB_CB(skb)->seq + 1;
+		tp->copied_seq = tp->rcv_nxt;
+		tp->rcv_wup = TCP_SKB_CB(skb)->seq + 1;
 
 		/* RFC1323: The window in SYN & SYN/ACK segments is
 		 * never scaled.

@@ -633,7 +633,7 @@ gen_header_checksums() {
     fi
 
     make -C "$kernel" ${CACHE_MAKE_FLAGS} M="${cache_dir}/pkgtmp/dependency_mod" depmod.i > $dbgdev
-    
+
     if [ $? -ne 0 ] ; then
         echo "Compilation failed. Unable to compute header dependency tree."
         return 1
@@ -847,7 +847,7 @@ do_remote_build() {
         echo "Check connectivity and username/password."
         exit 1
     fi
-    
+
     status=$(echo "$reply" | head -n 1)
 
     # If status is OK, build ID should be included as well
@@ -857,13 +857,13 @@ do_remote_build() {
         echo "$status"
         exit 1
     fi
-    
+
     # ID of this build is given in the reply
     build_id=$(echo "$reply" | head -n 2 | tail -n 1)
-    
+
     echo "Build started, id ${build_id}"
     echo "Polling for completion every 10 seconds..."
-    
+
     statusurl="https://${server}/builds/${build_id}/.status"
 
     for i in `seq $max_polls`
@@ -873,7 +873,7 @@ do_remote_build() {
         else
             reply=$($curl_quiet "$statusurl")
         fi
-        
+
         if [ $? -ne 0 ] ; then
             if [ $i -eq $max_polls ] ; then
                 echo "Maximum attempts exceeded. Build process"
@@ -886,37 +886,37 @@ do_remote_build() {
             sleep $poll_delay
             continue
         fi
-        
+
         break
     done
-    
+
     echo "Build finished."
 
     # Downloadable filename given in the reply
     status=$(echo "$reply" | head -n 1)
-    
+
     if [ "$status" != "OK" ] ; then
         echo "Build failed. Cannot download package."
         echo "Tuxera has been notified of this failure."
         exit 1
     fi
-    
+
     filename=$(echo "$reply" | head -2 | tail -1)
     fileurl="https://${server}/builds/${build_id}/${filename}"
-    
+
     echo "Downloading ${filename} ..."
-    
+
     if [ "$http_client" = "wget" ] ; then
         reply=$(do_retry $wget -O "$filename" "$fileurl")
     else
         reply=$(do_retry $curl -o "$filename" "$fileurl")
     fi
-    
+
     if [ $? -ne 0 ] ; then
         echo "Failed. You can still try to download using the link in the e-mail that was sent."
         exit 1
     fi
-    
+
     echo "Download finished."
 
     # Create cache entry.
@@ -1060,7 +1060,7 @@ check_http_client() {
         wget_quiet=${wget_quiet}" -q"
         wget=${wget}" -nv"
     fi
-    
+
     if [ -n "$ignore_certificates" ] ; then
         curl_quiet=${curl_quiet}" -k"
         wget_quiet=${wget_quiet}" --no-check-certificate"
@@ -1227,7 +1227,7 @@ mute() {
 # Script start
 #
 
-script_version="19.12.17"
+script_version="19.11.8"
 cache_dir=".tuxera_update_cache"
 dbgdev="/dev/null"
 cache_lookup_time="none"
@@ -1244,7 +1244,7 @@ conn_fail_retry_delay=4
 
 echo "tuxera_update.sh version $script_version"
 
-if ! options=$(getopt -o pahuv -l target:,user:,pass:,use-package:,source-dir:,output-dir:,version:,cache-dir:,server:,extraargs:,max-cache-entries:,admin:,upgrade,help,ignore-cert,no-check-certificate,use-curl,use-wget,no-excludes,use-cache,verbose,latest,retry-on-connection-fail,disable-kh-check,max_build_time_sec,path-append:,path-prepend: -- "$@")
+if ! options=$(getopt -o pahuv -l target:,user:,pass:,use-package:,source-dir:,output-dir:,version:,cache-dir:,server:,extraargs:,max-cache-entries:,admin:,upgrade,help,ignore-cert,no-check-certificate,use-curl,use-wget,no-excludes,use-cache,verbose,latest,retry-on-connection-fail,disable-kh-check,max_build_time_sec: -- "$@")
 then
     usage
 fi
@@ -1284,8 +1284,6 @@ do
     --retry-on-connection-fail) retry_on_conn_fail="yes" ;;
     --max_build_time_sec) max_build_time_sec="$2" ; shift;;
     --disable-kh-check) disable_kernel_headers_check="yes" ;;
-    --path-append) path_append="$2"; shift;;
-    --path-prepend) path_prepend="$2"; shift;;
     (--) shift; break;;
     (-*) echo "$0: error - unrecognized option $1" 1>&2; usage;;
     (*) break;;
@@ -1319,20 +1317,8 @@ if [ -z "$target" ] ; then
     target="default"
 fi
 
-if [ -n "$path_append" ] ; then
-	export PATH=${PATH}:"$path_append"
-    echo Using modified PATH: ${PATH}
-fi
-
-if [ -n "$path_prepend" ] ; then
-	export PATH="$path_prepend":${PATH}
-    echo Using modified PATH: ${PATH}
-fi
-
-# Temporary disable path restrictions on android
-export TEMPORARY_DISABLE_PATH_RESTRICTIONS=y
-
 check_cmds tar find grep readlink cut sed
+
 # Check specified output-dir exists
 if [ -n "$output_dir" ] && [ ! -d "$(readlink -f "$output_dir")" ]; then
     echo "Specified --output_dir '$output_dir' doesn't exist. Unable to continue."

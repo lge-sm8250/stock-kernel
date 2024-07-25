@@ -27,6 +27,9 @@
 #include "veneer-primitives.h"
 
 #include <linux/pm_qos.h>
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
 #define VENEER_NAME		"veneer"
 #define VENEER_COMPATIBLE	"lge,veneer-psy"
@@ -68,6 +71,7 @@ struct veneer {
 	// highspeed threshold
 	int			threshold_wired;
 	int			threshold_wireless;
+	int			threshold_wireless_15w;
 
 /* shadow states used for cache */
 	// charger states
@@ -96,6 +100,7 @@ struct veneer {
 
 /* power supplies */
 	struct power_supply*	psy_cp;
+	struct power_supply*	psy_bms;
 	struct power_supply*	psy_battery;
 	struct power_supply*	psy_usb;
 	struct power_supply*	psy_wireless;
@@ -103,6 +108,7 @@ struct veneer {
 	bool pm_qos_flag;
 	struct pm_qos_request pm_qos;
 	struct mutex veneer_lock;
+	bool enable_concurrency_otg_wlc;
 
 	int actm_mode_now;
 };
@@ -140,6 +146,13 @@ static struct power_supply* get_psy_cp(struct veneer* veneer_me)
 	if (!veneer_me->psy_cp)
 		veneer_me->psy_cp = power_supply_get_by_name("charge_pump_master");
 	return veneer_me->psy_cp;
+}
+
+static struct power_supply* get_psy_bms(struct veneer* veneer_me)
+{
+	if (!veneer_me->psy_bms)
+		veneer_me->psy_bms = power_supply_get_by_name("bms");
+	return veneer_me->psy_bms;
 }
 
 static struct power_supply* get_psy_battery(struct veneer* veneer_me)
@@ -221,12 +234,10 @@ static enum charging_supplier supplier_typec(
 	if (!power_supply_get_property(usb, POWER_SUPPLY_PROP_TYPEC_MODE, buf)) {
 		switch (buf->intval) {
 		case POWER_SUPPLY_TYPEC_NONE :
+		case POWER_SUPPLY_TYPEC_SOURCE_DEFAULT :
 			ret = (real == POWER_SUPPLY_TYPE_USB_FLOAT)
 				? CHARGING_SUPPLY_TYPE_FLOAT
 				: CHARGING_SUPPLY_DCP_DEFAULT;
-			break;
-		case POWER_SUPPLY_TYPEC_SOURCE_DEFAULT :
-			ret = CHARGING_SUPPLY_DCP_DEFAULT;
 			break;
 		case POWER_SUPPLY_TYPEC_SOURCE_MEDIUM :
 			ret = CHARGING_SUPPLY_DCP_22K;
@@ -254,8 +265,12 @@ static enum charging_supplier supplier_wireless(
 	{
 		pr_veneer("wireless POWER_SUPPLY_PROP_POWER_NOW = %d\n", buf->intval);
 		buf->intval /= 1000;
-		return (buf->intval >= veneer_me->threshold_wireless) ?
-			CHARGING_SUPPLY_WIRELESS_9W : CHARGING_SUPPLY_WIRELESS_5W;
+		if (buf->intval >= veneer_me->threshold_wireless_15w)
+			return CHARGING_SUPPLY_WIRELESS_15W;
+		if (buf->intval >= veneer_me->threshold_wireless)
+			return CHARGING_SUPPLY_WIRELESS_9W;
+		else
+			return CHARGING_SUPPLY_WIRELESS_5W;
 	}
 	else
 		return CHARGING_SUPPLY_TYPE_UNKNOWN;
@@ -309,9 +324,6 @@ static void update_veneer_supplier(struct veneer* veneer_me)
 
 			switch (val.intval) {
 			case POWER_SUPPLY_TYPE_USB_FLOAT :
-				new = CHARGING_SUPPLY_TYPE_FLOAT;
-				break;
-				// fall through, (Here is no break)
 			case POWER_SUPPLY_TYPE_USB_DCP :
 				// USB C type would be enumerated to DCP type
 				new = supplier_typec(psy, &val);
@@ -382,7 +394,9 @@ static void update_veneer_uninodes(struct veneer* veneer_me)
 	int mw_highspeed = INT_MAX;
 	int mw_now = 0, stored = 0;
 	struct power_supply*	psy = NULL;
+	int pd_hr = 0;
 	int rc = 0;
+	union power_supply_propval val = { .intval = 0, };
 
     // 'bootcmd: lge.charger_verbose=(%bool)'
 	//		is adopted to branch vzw/att or not.
@@ -447,11 +461,24 @@ static void update_veneer_uninodes(struct veneer* veneer_me)
 			if (!rc)
 				mw_now = val.intval / 1000;
 			pr_veneer("mw_now = %d\n", mw_now);
+		} else {
+			psy = get_psy_usb(veneer_me);
+			if (psy) {
+				rc = power_supply_get_property(
+						psy, POWER_SUPPLY_PROP_PD_IN_HARD_RESET, &val);
+				if (!rc)
+					pd_hr = val.intval;
+			}
 		}
 
-		unified_nodes_store("charger_highspeed",
-			(mw_now >= mw_highspeed
-				&& type != CHARGING_SUPPLY_DCP_10K) ? "1" : "0", 1);
+		if (!pd_hr) {
+			unified_nodes_store("charger_highspeed",
+				(mw_now >= mw_highspeed
+					&& type != CHARGING_SUPPLY_DCP_10K) ? "1" : "0", 1);
+		}
+		else {
+			pr_dbg_veneer("Skip to update highspeed because of pd hard reset.\n");
+		}
 	}
 	else
 		pr_dbg_veneer("Skip to update highspeed "
@@ -484,18 +511,24 @@ static void notify_siblings(struct veneer* veneer_me)
 {
 	/* Capping IUSB/IBAT/IDC by charger */
 	charging_ceiling_vote(veneer_me->veneer_supplier);
+#ifndef CONFIG_LGE_PM_CCD
 	/* Calculating remained charging time */
 	charging_time_update(veneer_me->veneer_supplier, false);
+#endif
 	/* LGE OTP scenario */
 	protection_battemp_monitor();
 	/* To meet battery spec. */
 	protection_batvolt_refresh(supplier_connected(veneer_me));
+#ifndef CONFIG_LGE_PM_CCD
 	/* Limiting SoC range in the store mode charging */
 	protection_showcase_update();
 	/* protection of usb io */
 	protection_usbio_update(veneer_me->presence_usb);
+#endif
 	/* adaptive charging thermal mitigation(ACTM) */
+#if defined(CONFIG_LGE_PM_ACTM) || defined(CONFIG_LGE_PM_ACTM_V2)
 	actm_trigger();
+#endif
 }
 
 static void notify_fabproc(struct veneer* veneer_me)
@@ -518,9 +551,41 @@ static void notify_fabproc(struct veneer* veneer_me)
 	}
 }
 
+#ifdef CONFIG_LGE_SAR_CONTROLLER_USB_DETECT
+static void notify_sar_controller(struct veneer* veneer_me)
+{
+#ifdef CONFIG_SAR_ALMF04QFN_2_3CH_NIT
+    extern void sar_controller_notify_connect(u32 type, bool is_connected);
+#endif
+#ifdef CONFIG_SAR_2nd_ALMF04QFN_2_3CH_NIT
+    extern void sar_2nd_controller_notify_connect(u32 type, bool is_connected);
+    #endif
+    static bool pre_usb_connected;
+
+
+    enum charging_supplier  type = veneer_me->veneer_supplier;
+    bool usb_connected = veneer_me->presence_usb;
+
+    if( pre_usb_connected != usb_connected) {
+#ifdef CONFIG_SAR_ALMF04QFN_2_3CH_NIT
+        sar_controller_notify_connect((u32)type, usb_connected);
+#endif
+#ifdef CONFIG_SAR_2nd_ALMF04QFN_2_3CH_NIT
+        sar_2nd_controller_notify_connect((u32)type, usb_connected);
+#endif
+        pre_usb_connected = usb_connected;
+        pr_veneer("call notify_sar_controller.\n");
+    }
+}
+#endif
+
 static void notify_touch(struct veneer* veneer_me)
 {
 #ifdef CONFIG_LGE_TOUCH_CORE
+	#if defined(CONFIG_LGE_TOUCH_CORE_SUB)
+	extern void touch_sub_notify_connect(u32 type);
+	extern void touch_sub_notify_wireless(u32 type);
+	#endif
 	extern void touch_notify_connect(u32 type);
 	extern void touch_notify_wireless(u32 type);
 	static bool charging_wired_prev, charging_wireless_prev;
@@ -536,10 +601,16 @@ static void notify_touch(struct veneer* veneer_me)
 	}
 	else if (charging_wired_prev != charging_wired_now) {
 		touch_notify_connect((u32)charging_wired_now);
+	#if defined(CONFIG_LGE_TOUCH_CORE_SUB)
+		touch_sub_notify_connect((u32)charging_wired_now);
+	#endif
 		charging_wired_prev = charging_wired_now;
 	}
 	else if (charging_wireless_prev != charging_wireless_now) {
 		touch_notify_wireless((u32)charging_wireless_now);
+	#if defined(CONFIG_LGE_TOUCH_CORE_SUB)
+		touch_sub_notify_wireless((u32)charging_wireless_now);
+	#endif
 		charging_wireless_prev = charging_wireless_now;
 	}
 	else
@@ -573,12 +644,17 @@ static void veneer_data_update(struct veneer* veneer_me)
 	notify_siblings(veneer_me);
 	notify_fabproc(veneer_me);
 	notify_touch(veneer_me);
+#ifdef CONFIG_LGE_SAR_CONTROLLER_USB_DETECT
+        notify_sar_controller(veneer_me);
+#endif
 }
 
 static enum power_supply_property psy_property_list [] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_HEALTH,
+#ifndef CONFIG_LGE_PM_CCD
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
+#endif
 };
 
 #define SLOW_CHARGING_TIMEOUT_MS	5000
@@ -637,8 +713,10 @@ static const char* psy_property_name(enum power_supply_property prop)
 		return "POWER_SUPPLY_PROP_HEALTH";
 	case POWER_SUPPLY_PROP_REAL_TYPE :
 		return "POWER_SUPPLY_PROP_REAL_TYPE";
+#ifndef CONFIG_LGE_PM_CCD
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 		return "POWER_SUPPLY_PROP_TIME_TO_FULL_NOW";
+#endif
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED:
 		return "POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED";
 	default:
@@ -681,27 +759,48 @@ static int psy_property_get(
 	enum power_supply_property prop, union power_supply_propval *val)
 {
 	struct veneer* veneer_me = power_supply_get_drvdata(psy_me);
+	struct power_supply* bms_psy = NULL;
 	struct power_supply* battery = NULL;
 	char buff [2] = { 0, };
 	int rc = 0;
 	int ibat_ma = 0;
-
+#ifdef CONFIG_LGE_PM_EXT_QG_V2
+	int ui_soc = 0, sys_soc = 0;
+#endif
 	if (!veneer_me) {
 		pr_veneer("veneer is not ready yet\n");
 		return -EINVAL;
 	}
 	battery = get_psy_battery(veneer_me);
+	bms_psy = get_psy_bms(veneer_me);
 
 	switch (prop) {
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW :
+#ifndef CONFIG_LGE_PM_CCD
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW : {
 		rc = -EINVAL;
-
+#ifdef CONFIG_LGE_PM_EXT_QG_V2
+		if (bms_psy && !power_supply_get_property(bms_psy,
+				POWER_SUPPLY_PROP_CAPACITY_RAW, val)) {
+			sys_soc = val->intval;
+			rc = power_supply_get_property(bms_psy,
+				POWER_SUPPLY_PROP_CAPACITY, val);
+			if (rc < 0){
+				pr_veneer("POWER_SUPPLY_PROP_CAPACITY get failed.\n");
+				break;
+			}
+			ui_soc = val->intval;
+			if (ui_soc >= 100)
+				sys_soc = 100 * 100;
+			val->intval = charging_time_remains(sys_soc * 255 / 10000);
+#else
 		if (battery && !power_supply_get_property(battery,
-			POWER_SUPPLY_PROP_CAPACITY_RAW, val)) {
+				POWER_SUPPLY_PROP_CAPACITY_RAW, val)) {
 			val->intval = charging_time_remains(val->intval);
+#endif
 			rc = 0;
 		}
-		break;
+	}	break;
+#endif
 
 	case POWER_SUPPLY_PROP_SDP_CURRENT_MAX :
 		if (unified_nodes_show("fake_sdpmax", buff) && !strncmp(buff, "1", 1)
@@ -804,7 +903,9 @@ static int psy_property_set(
 
 		veneer_me->usbin_realtype = val->intval;
 		veneer_me->usbin_typefix = true;
+#ifndef CONFIG_LGE_PM_CCD
 		charging_time_clear();
+#endif
 		veneer_data_update(veneer_me);
 		pr_veneer("%s: Setting charger to %s externally\n",
 			psy_property_name(prop), charger_name(veneer_me->veneer_supplier));
@@ -818,13 +919,14 @@ out:		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED :
 		psy_property_set_input_current_settled(veneer_me, val->intval);
 		break;
-
+#ifndef CONFIG_LGE_PM_CCD
 	case POWER_SUPPLY_PROP_CHARGE_NOW_ERROR :
 		pr_veneer("veneer exception %04x detected\n", val->intval);
 		veneer_me->veneer_exception |= val->intval;
 		if (val->intval == EXCEPTION_WIRED_VCCOVER)
 			protection_usbio_trigger();
 		break;
+#endif
 
 	default:
 		rc = -EINVAL;
@@ -988,17 +1090,22 @@ static void psy_external_changed(struct power_supply* psy_me)
 	}
 	if (psy_wireless) {
 		/* LGE scenario : Disable wireless charging on wired */
-		buffer.intval = !(veneer_me->presence_otg || veneer_me->presence_usb);
+		if (veneer_me->enable_concurrency_otg_wlc)
+			buffer.intval = !(veneer_me->presence_usb && !veneer_me->presence_otg);
+		else
+			buffer.intval = !(veneer_me->presence_otg || veneer_me->presence_usb);
 		if (power_supply_set_property(psy_wireless,
 			POWER_SUPPLY_PROP_CHARGING_ENABLED, &buffer)) {
 			pr_veneer("Error to enable wireless : %d\n", buffer.intval);
 		}
+#ifdef CONFIG_CHARGER_IDTP9222
 		/* LGE scenario : Monitoring Temperature for overheat */
 		buffer.intval = veneer_me->battery_temperature;
 		if (power_supply_set_property(psy_wireless,
 			POWER_SUPPLY_PROP_TEMP, &buffer)) {
 			pr_veneer("Error to set temp : %d\n", buffer.intval);
 		}
+#endif
 		/* Then update wireless present */
 		if (!power_supply_get_property(
 				psy_wireless, POWER_SUPPLY_PROP_PRESENT, &buffer)
@@ -1006,6 +1113,7 @@ static void psy_external_changed(struct power_supply* psy_me)
 			veneer_me->presence_wireless = !!buffer.intval;
 			strcat(hit, "W:PRESENT ");
 		}
+#ifdef CONFIG_CHARGER_IDTP9222
 		/* Sending EPT or CS100 to TX pad */
 		buffer.intval = veneer_me->battery_eoc;
 		if (veneer_me->presence_wireless
@@ -1014,6 +1122,7 @@ static void psy_external_changed(struct power_supply* psy_me)
 			POWER_SUPPLY_PROP_CHARGE_DONE, &buffer)) {
 			pr_veneer("Error to set full wireless : %d\n", buffer.intval);
 		}
+#endif
 	}
 
 	if (strlen(hit)) {
@@ -1160,6 +1269,7 @@ static bool feed_protection_batvolt(int* vnow_mv, int* icap_ma, int *inow_ma, in
 	return ret;
 }
 
+#ifndef CONFIG_LGE_PM_CCD
 static bool feed_protection_showcase(
 	bool* enabled, bool* charging, int* capacity)
 {
@@ -1197,16 +1307,16 @@ static void back_protection_showcase(const char* status)
 		}
 	}
 }
-
+#endif
 int get_veneer_param(int id, int *val)
 {
 	int rc = 0, buf = 0, stored = 0;
 	int fcc = 0;
 	char str[16] = { 0, };
-	char buff[2] = { 0, };
 	union power_supply_propval prop = { .intval = 0, };
 	struct veneer* veneer_me = veneer_data_fromair();
 	struct power_supply* psy_cp = NULL;
+	struct power_supply* psy_bms = NULL;
 	struct power_supply* psy_usb = NULL;
 	struct power_supply* psy_batt = NULL;
 	struct power_supply* psy_wireless = NULL;
@@ -1217,17 +1327,19 @@ int get_veneer_param(int id, int *val)
 
 	psy_cp = get_psy_cp(veneer_me);
 	psy_usb = get_psy_usb(veneer_me);
+	psy_bms = get_psy_bms(veneer_me);
 	psy_batt = get_psy_battery(veneer_me);
 	psy_wireless = get_psy_wireless(veneer_me);
 	tzd = thermal_zone_get_zone_by_name("vts-virt-therm");
 
-	if (!psy_cp || !psy_usb || !psy_batt || !psy_wireless || !tzd || !val)
+	if (!psy_usb || !psy_bms || !psy_batt || !tzd || !val)
 		return -1;
 
 	*val = -9999;
 
 	switch (id) {
 		case VENEER_FEED_ACTM_MODE:
+			*val = -2;
 			rc = !unified_nodes_show("actm_mode", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
@@ -1387,7 +1499,7 @@ int get_veneer_param(int id, int *val)
 		case VENEER_FEED_ACTM_CURRENT_CP_PPS:
 			rc = power_supply_get_property(psy_usb,
 					POWER_SUPPLY_PROP_SMB_EN_REASON, &prop);
-			if (!rc && (prop.intval == POWER_SUPPLY_CP_PPS))
+			if (!rc && (prop.intval == POWER_SUPPLY_CP_PPS) && psy_cp)
 			{
 				rc = !unified_nodes_show("actm_curr_cp_pps", str);
 				if (!rc) {
@@ -1399,7 +1511,7 @@ int get_veneer_param(int id, int *val)
 		case VENEER_FEED_ACTM_CURRENT_CP_QC30:
 			rc = power_supply_get_property(psy_usb,
 					POWER_SUPPLY_PROP_SMB_EN_REASON, &prop);
-			if (!rc && (prop.intval == POWER_SUPPLY_CP_HVDCP3))
+			if (!rc && (prop.intval == POWER_SUPPLY_CP_HVDCP3) && psy_cp)
 			{
 				rc = !unified_nodes_show("actm_curr_cp_qc30", str);
 				if (!rc) {
@@ -1409,42 +1521,42 @@ int get_veneer_param(int id, int *val)
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_EPP_0:
-			rc = !unified_nodes_show("actm_current_epp_0", str);
+			rc = !unified_nodes_show("actm_power_epp_0", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_EPP_1:
-			rc = !unified_nodes_show("actm_current_epp_1", str);
+			rc = !unified_nodes_show("actm_power_epp_1", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_EPP_2:
-			rc = !unified_nodes_show("actm_current_epp_2", str);
+			rc = !unified_nodes_show("actm_power_epp_2", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_BPP_0:
-			rc = !unified_nodes_show("actm_current_bpp_0", str);
+			rc = !unified_nodes_show("actm_power_bpp_0", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_BPP_1:
-			rc = !unified_nodes_show("actm_current_bpp_1", str);
+			rc = !unified_nodes_show("actm_power_bpp_1", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_ACTM_CURRENT_BPP_2:
-			rc = !unified_nodes_show("actm_current_bpp_2", str);
+			rc = !unified_nodes_show("actm_power_bpp_2", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
 				*val = stored;
@@ -1463,8 +1575,13 @@ int get_veneer_param(int id, int *val)
 				*val = prop.intval;
 			break;
 		case VENEER_FEED_CAPACITY_RAW:
+#ifdef CONFIG_LGE_PM_EXT_QG_V2
+			rc = power_supply_get_property(psy_bms,
+				POWER_SUPPLY_PROP_CAPACITY_RAW, &prop);
+#else
 			rc = power_supply_get_property(psy_batt,
 				POWER_SUPPLY_PROP_CAPACITY_RAW, &prop);
+#endif
 			if (!rc)
 				*val = prop.intval;
 			break;
@@ -1497,14 +1614,14 @@ int get_veneer_param(int id, int *val)
 				*val = prop.intval / 1000;
 			break;
 		case VENEER_FEED_IDC: /* mA */
-			rc = power_supply_get_property(psy_wireless,
-				POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &prop);
+			rc = psy_wireless ? power_supply_get_property(psy_wireless,
+				POWER_SUPPLY_PROP_CURRENT_MAX, &prop) : -ENODEV;
 			if (!rc)
 				*val = prop.intval / 1000;
 			break;
 		case VENEER_FEED_VDC: /* mV */
-			rc = power_supply_get_property(psy_wireless,
-				POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN, &prop);
+			rc = psy_wireless ? power_supply_get_property(psy_wireless,
+				POWER_SUPPLY_PROP_VOLTAGE_MAX, &prop) : -ENODEV;
 			if (!rc)
 				*val = prop.intval / 1000;
 			break;
@@ -1520,13 +1637,15 @@ int get_veneer_param(int id, int *val)
 
 			break;
 		case VENEER_FEED_IRC_ENABLED:
-			rc = !unified_nodes_show("irc_enabled", buff);
+			*val = 0;
+			rc = !unified_nodes_show("irc_enabled", str);
 			if (!rc) {
-				sscanf(buff, "%d", &stored);
+				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
 		case VENEER_FEED_IRC_RESISTANCE:
+			*val = 0;
 			rc = !unified_nodes_show("irc_resistance", str);
 			if (!rc) {
 				sscanf(str, "%d", &stored);
@@ -1534,14 +1653,14 @@ int get_veneer_param(int id, int *val)
 			}
 			break;
 		case VENEER_FEED_CP_STATUS1:
-			rc = power_supply_get_property(psy_cp,
-					POWER_SUPPLY_PROP_CP_STATUS1, &prop);
+			rc = psy_cp ? power_supply_get_property(psy_cp,
+					POWER_SUPPLY_PROP_CP_STATUS1, &prop) : -ENODEV;
 			if (!rc)
 				*val = prop.intval;
 			break;
 		case VENEER_FEED_CP_STATUS2:
-			rc = power_supply_get_property(psy_cp,
-					POWER_SUPPLY_PROP_CP_STATUS2, &prop);
+			rc = psy_cp ? power_supply_get_property(psy_cp,
+					POWER_SUPPLY_PROP_CP_STATUS2, &prop) : -ENODEV;
 			if (!rc)
 				*val = prop.intval;
 			break;
@@ -1558,9 +1677,9 @@ int get_veneer_param(int id, int *val)
 				*val = prop.intval;
 			break;
 		case VENEER_FEED_LCDON_STATUS:
-			rc = !unified_nodes_show("status_lcd", buff);
+			rc = !unified_nodes_show("status_lcd", str);
 			if (!rc) {
-				sscanf(buff, "%d", &stored);
+				sscanf(str, "%d", &stored);
 				*val = stored;
 			}
 			break;
@@ -1576,14 +1695,15 @@ int get_veneer_param(int id, int *val)
 			if (!rc)
 				*val = prop.intval / 1000;
 			break;
+#ifndef CONFIG_LGE_PM_CCD
 		case VENEER_FEED_POWER_NOW:
 			*val = 0;
 			if (veneer_me->presence_usb) {
 				rc = power_supply_get_property(psy_usb,
 					POWER_SUPPLY_PROP_POWER_NOW, &prop);
 			} else if (veneer_me->presence_wireless) {
-				rc = power_supply_get_property(psy_wireless,
-					POWER_SUPPLY_PROP_POWER_NOW, &prop);
+				rc = psy_wireless ? power_supply_get_property(psy_wireless,
+						POWER_SUPPLY_PROP_POWER_NOW, &prop) : -ENODEV;
 			}
 			if (!rc)
 				*val = prop.intval / 1000;
@@ -1596,13 +1716,23 @@ int get_veneer_param(int id, int *val)
 				*val = stored;
 			}
 			break;
-		case VENEER_FEED_PPS_TA_COUNT:
-			*val = 0;
-			rc = !unified_nodes_show("pps_ta_count", str);
-			if (!rc) {
-				sscanf(str, "%d", &stored);
-				*val = stored;
-			}
+#endif
+		case VENEER_FEED_BATT_PSY_IBAT_NOW:
+			rc = power_supply_get_property(psy_batt,
+				POWER_SUPPLY_PROP_CURRENT_NOW, &prop);
+			if (!rc)
+				*val = prop.intval / 1000;
+			break;
+
+		case VENEER_FEED_USB_PRESENT:
+			rc = power_supply_get_property(psy_usb,
+				POWER_SUPPLY_PROP_PRESENT, &prop);
+			*val = (rc < 0) ? 0 : prop.intval;
+			break;
+		case VENEER_FEED_WIRELESS_PRESENT:
+			rc = psy_wireless ? power_supply_get_property(psy_wireless,
+				POWER_SUPPLY_PROP_PRESENT, &prop) : -ENODEV;
+			*val = (rc < 0) ? 0 : prop.intval;
 			break;
 	}
 
@@ -1616,7 +1746,6 @@ int set_veneer_param(int id, int val)
 	struct veneer* veneer_me = veneer_data_fromair();
 	struct power_supply* psy_batt = NULL;
 	struct power_supply* psy_wireless = NULL;
-	char buf[2] = "0";
 
 	if (!veneer_me)
 		return -1;
@@ -1624,21 +1753,23 @@ int set_veneer_param(int id, int val)
 	psy_batt = get_psy_battery(veneer_me);
 	psy_wireless = get_psy_wireless(veneer_me);
 
-	if (!psy_wireless || !psy_batt)
+	if (!psy_batt)
 		return -1;
 
 	switch (id) {
 		case VENEER_FEED_VDC: /* mV */
 			prop.intval = val * 1000;
-			rc = power_supply_set_property(psy_wireless,
-				POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN, &prop);
+			rc = psy_wireless ? power_supply_set_property(psy_wireless,
+				POWER_SUPPLY_PROP_VOLTAGE_MAX, &prop) : -ENODEV;
 			break;
 		case VENEER_FEED_ACTM_MODE_NOW:
 			veneer_me->actm_mode_now = val;
 			break;
+#ifndef CONFIG_LGE_PM_CCD
 		case VENEER_FEED_POWER_SUPPLY_CHANGED:
 			power_supply_changed(psy_batt);
 			break;
+#endif
 		case VENEER_FEED_BATT_PROFILE_FCC_VOTER:
 			prop.intval = val * 1000;
 			rc = power_supply_set_property(psy_batt,
@@ -1648,10 +1779,6 @@ int set_veneer_param(int id, int val)
 			prop.intval = val * 1000;
 			rc = power_supply_set_property(psy_batt,
 				POWER_SUPPLY_PROP_VOLTAGE_MAX, &prop);
-			break;
-		case VENEER_FEED_PPS_TA_COUNT:
-			snprintf(buf, sizeof(buf), "%d", val);
-			unified_nodes_store("pps_ta_count", buf, strlen(buf));
 			break;
 	}
 
@@ -1708,11 +1835,17 @@ static bool probe_siblings(struct device* dev, int mincap, int fullraw)
 	// veneer voter should be ready before builing siblings
 	ret &= charging_ceiling_create(
 		of_find_node_by_name(dnode, "charging-ceiling"));
+#ifndef CONFIG_LGE_PM_CCD
 	ret &= charging_time_create(
 		of_find_node_by_name(dnode, "charging-time-v3"),
+#ifdef CONFIG_LGE_PM_EXT_QG_V2
+		(fullraw * 255 / 100),
+#else
 		fullraw,
+#endif
 		get_veneer_param,
 		set_veneer_param);
+#endif
 	ret &= protection_battemp_create(
 		of_find_node_by_name(dnode, "protection-battemp"),
 		mincap,
@@ -1724,16 +1857,35 @@ static bool probe_siblings(struct device* dev, int mincap, int fullraw)
 		feed_protection_batvolt,
 		get_veneer_param,
 		set_veneer_param);
+#ifndef CONFIG_LGE_PM_CCD
 	ret &= protection_showcase_create(
 		of_find_node_by_name(dnode, "protection-showcase"),
 		feed_protection_showcase,
 		back_protection_showcase);
 	ret &= protection_usbio_create(
 		of_find_node_by_name(dnode, "protection-usbio"));
+#endif
+
+#if defined(CONFIG_LGE_PM_ACTM) || defined(CONFIG_LGE_PM_ACTM_V2)
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+	if(HW_SKU_NA_CDMA_VZW == lge_get_sku_carrier())
+		ret &= actm_create(
+			of_find_node_by_name(dnode, "vzw-adaptive-charging-thermal"),
+			get_veneer_param,
+			set_veneer_param);
+	else
+		ret &= actm_create(
+			of_find_node_by_name(dnode, "adaptive-charging-thermal"),
+			get_veneer_param,
+			set_veneer_param);
+#else
 	ret &= actm_create(
 		of_find_node_by_name(dnode, "adaptive-charging-thermal"),
 		get_veneer_param,
 		set_veneer_param);
+#endif
+#endif
+
 	ret &= unified_nodes_create(
 		of_find_node_by_name(dnode, "unified-nodes"));
 	ret &= unified_sysfs_create(
@@ -1782,11 +1934,22 @@ static bool probe_preset(struct veneer* veneer_me)
 static bool probe_dt(struct device* veneer_dev, struct veneer* veneer_me)
 {
 	int max_irc_mohm = 0;
-	struct device_node* veneer_supp =
-		of_find_node_by_name(NULL, "lge-battery-supplement");
 	struct device_node* dnode_proc_volt =
 		of_find_node_by_name(NULL, "protection-batvolt");
 	struct __veneer_dt *dt = &veneer_me->dt;
+	struct device_node* veneer_wa =
+		of_find_node_by_name(NULL, "veneer-workaround");
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+	struct device_node* veneer_supp = NULL;
+
+	if(HW_SKU_NA_CDMA_VZW == lge_get_sku_carrier())
+		veneer_supp = of_find_node_by_name(NULL, "lge-vzw-battery-supplement");
+	else
+		veneer_supp = of_find_node_by_name(NULL, "lge-battery-supplement");
+#else
+	struct device_node* veneer_supp =
+		of_find_node_by_name(NULL, "lge-battery-supplement");
+#endif
 
 	if (!veneer_supp || !dnode_proc_volt)
 		return false;
@@ -1803,13 +1966,18 @@ static bool probe_dt(struct device* veneer_dev, struct veneer* veneer_me)
 	/* lge-veneer-psy */
 	if (of_property_read_u32(veneer_dev->of_node,
 			"highspeed-threshold-mv-wired",
-			&veneer_me->threshold_wired) < 0
-		|| of_property_read_u32(veneer_dev->of_node,
-			"highspeed-threshold-mv-wireless",
-			&veneer_me->threshold_wireless) < 0) {
+			&veneer_me->threshold_wired) < 0)
 		veneer_me->threshold_wired = 15000;
+
+	if (of_property_read_u32(veneer_dev->of_node,
+			"highspeed-threshold-mv-wireless",
+			&veneer_me->threshold_wireless) < 0)
 		veneer_me->threshold_wireless = 7200;
-	}
+
+	if (of_property_read_u32(veneer_dev->of_node,
+			"highspeed-threshold-mv-wireless-15w",
+			&veneer_me->threshold_wireless_15w) < 0)
+		veneer_me->threshold_wireless_15w = 9000;
 
 	/* proctection-batvolt */
 	dt->irc_enable = of_property_read_bool(dnode_proc_volt, "lge,irc-enable");
@@ -1830,6 +1998,12 @@ static bool probe_dt(struct device* veneer_dev, struct veneer* veneer_me)
 		of_property_read_u32(dnode_proc_volt,
 			"lge,threshold-ibat-pct", &dt->irc_threshold_ma);
 		dt->irc_threshold_ma = veneer_me->profile_mincap * dt->irc_threshold_ma / 100;
+	}
+
+	/* veneer-workaround */
+	if (veneer_wa) {
+		veneer_me->enable_concurrency_otg_wlc =
+			of_property_read_bool(veneer_wa, "lge,enable-concurrency-otg-wlc");
 	}
 
 	return true;
@@ -1873,11 +2047,15 @@ static void veneer_clear(struct veneer* veneer_me)
 	pr_veneer("Clearing . . .\n");
 
 	charging_ceiling_destroy();
+#ifndef CONFIG_LGE_PM_CCD
 	charging_time_destroy();
+	protection_showcase_destroy();
+#endif
 	protection_battemp_destroy();
 	protection_batvolt_destroy();
-	protection_showcase_destroy();
+#if defined(CONFIG_LGE_PM_ACTM) || defined(CONFIG_LGE_PM_ACTM_V2)
 	actm_destroy();
+#endif
 	unified_nodes_destroy();
 	unified_sysfs_destroy();
 
@@ -1935,6 +2113,9 @@ static int veneer_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, veneer_me);
 	device_init_wakeup(veneer_me->veneer_dev, true);
 	psy_external_logging(&veneer_me->dwork_logger.work);
+
+	pr_veneer("veneer probe is successful.\n");
+
 	return 0;
 
 fail:	//veneer_clear(veneer_me);

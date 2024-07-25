@@ -25,9 +25,6 @@
 #ifdef CONFIG_LGE_DIAG_BYPASS
 #include "lg_diag_bypass.h"
 #endif
-#ifdef CONFIG_LGE_USB_DIAG_LOCK
-#include "diag_lock.h"
-#endif
 
 #ifdef CONFIG_MHI_BUS
 #define diag_mdm_init		diag_mhi_init
@@ -322,26 +319,6 @@ int diagfwd_bridge_write(int id, unsigned char *buf, int len)
 {
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
-/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
-#ifdef CONFIG_LGE_DM_APP
-	if (driver->logging_mode[DIAG_MD_MDM] != DIAG_MEMORY_DEVICE_MODE)
-	{
-#endif
-/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
-#ifdef CONFIG_LGE_USB_DIAG_LOCK
-	if(id == 0){
-		if(!diag_lock_is_allowed()){
-			pr_info("diag : %s diag lock mdm \n",__func__);
-			return 0;
-		}
-	}
-#endif
-/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
-#ifdef CONFIG_LGE_DM_APP
-	}
-#endif
-/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
-
 	if (bridge_info[id].dev_ops && bridge_info[id].dev_ops->write) {
 		return bridge_info[id].dev_ops->write(bridge_info[id].id,
 							bridge_info[id].ctxt,

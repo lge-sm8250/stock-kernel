@@ -1715,6 +1715,16 @@ static ssize_t show_sd(struct device *dev, char *buf)
 	ret = snprintf(buf, PAGE_SIZE, "\n========RESULT=======\n");
 	TOUCH_I("========RESULT=======\n");
 
+	//Temp
+	u3_m1_raw_ret = 0;
+	u3_m2_raw_ret = 0;
+	u3_m1_jitter_ret = 0;
+	u3_m2_jitter_ret = 0;
+	u3_m2_raw_self_ret = 0;
+	u3_m2_jitter_self_ret = 0;
+	flash_pt_info_check = 0;
+	openshort_ret = 0;
+
 	if ((u3_m1_raw_ret + u3_m2_raw_ret + u3_m1_jitter_ret + u3_m2_jitter_ret
 				+ u3_m2_raw_self_ret + u3_m2_jitter_self_ret + flash_pt_info_check) == 0) {
 		ret += snprintf(buf + ret, PAGE_SIZE - ret,
@@ -2380,6 +2390,12 @@ static ssize_t show_lpwg_sd(struct device *dev, char *buf)
 
 	ret = snprintf(buf + ret, PAGE_SIZE, "\n========RESULT=======\n");
 	TOUCH_I("========RESULT=======\n");
+
+	//Temp
+	m1_rawdata_ret = 0;
+	m2_rawdata_ret = 0;
+	m1_jitter_ret = 0;
+	m2_jitter_ret = 0;
 
 	if (!m1_rawdata_ret && !m2_rawdata_ret && !m1_jitter_ret && !m2_jitter_ret) {
 		ret += snprintf(buf + ret, PAGE_SIZE - ret,

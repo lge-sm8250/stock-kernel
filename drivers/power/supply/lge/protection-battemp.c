@@ -9,6 +9,8 @@ do {							\
 
 static int pr_debugmask;
 
+//#define DEBUG_BTP  //need to enable fake_battery when testing DEBUG_BTP
+
 #include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
@@ -19,6 +21,11 @@ static int pr_debugmask;
 #include <linux/workqueue.h>
 #include <linux/power_supply.h>
 #include <linux/platform_device.h>
+#ifdef DEBUG_BTP
+extern bool unified_nodes_show(const char* key, char* value);
+extern bool unified_nodes_store(const char* key, const char* value, size_t size);
+extern bool unified_bootmode_chargerlogo(void);
+#endif
 
 #include "veneer-primitives.h"
 
@@ -30,9 +37,11 @@ static int pr_debugmask;
 #define VOTER_NAME_CHILLY	"BTP(CHILLY)"
 
 static struct protection_battemp {
-	bool enable;
 	struct delayed_work	battemp_dwork;
 	struct wakeup_source	*battemp_wakelock;
+#ifdef DEBUG_BTP
+	struct delayed_work	debug_btp_dwork;
+#endif
 
 	// processed in external
 	bool (*get_protection_battemp)(bool* charging, int* temperature, int* mvoltage);
@@ -71,12 +80,13 @@ static struct protection_battemp {
 	bool chilly_is_supported;
 	int  chilly_degc_lowerbound;
 	int  chilly_degc_upperbound;
+	int  chilly_mv_hyst;
+	int  chilly_mv_bound;
 	int  chilly_mv_alert;
 	int  chilly_ma_alert;
 	int  chilly_ma_normal;
 
 } battemp_me = {
-	.enable = false,
 	.voter_ichilly = { .type = VOTER_TYPE_INVALID },
 	.voter_icharge = { .type = VOTER_TYPE_INVALID },
 	.voter_vfloat  = { .type = VOTER_TYPE_INVALID },
@@ -107,11 +117,115 @@ static struct protection_battemp {
 	.chilly_is_supported    = false,
 	.chilly_degc_upperbound = BATTEMP_NOTREADY,
 	.chilly_degc_lowerbound = BATTEMP_NOTREADY,
+	.chilly_mv_hyst		= BATTEMP_NOTREADY,
+	.chilly_mv_bound	= BATTEMP_NOTREADY,
 	.chilly_mv_alert	= BATTEMP_NOTREADY,
 	.chilly_ma_alert	= BATTEMP_NOTREADY,
 	.chilly_ma_normal       = BATTEMP_NOTREADY,
 };
 
+#ifdef DEBUG_BTP
+#define BTP_POWER_OFF_TEMP_IDX 22
+#define BTP_POWER_OFF_WARNING_TEMP_IDX (BTP_POWER_OFF_TEMP_IDX-3)
+#define BTP_POWER_OFF_CNT   3
+#define BTP_RECHECK_PERIOD 60000
+
+struct debug_btp {
+	int temp;
+	int capacity;
+	int voltage;
+};
+
+const struct debug_btp debug_btp_table[BTP_POWER_OFF_TEMP_IDX] = {
+	{-150, 80, 4000},   // HEALTH_COLD
+	{-100, 80, 4000},   // HEALTH_COLD
+	{-50, 80, 4000},    // HEALTH_COLD
+	{0, 80, 4000},      // HEALTH_COLD HEALTH_CHIILY    (Charging Stop)
+	{30, 80, 4000},     // HEALTH_COOL HEALTH_CHIILY    (Decrease Charging 0.3C Under 4V, Decrease Charging 0.2C Over 4V)
+	{50, 80, 4000},     // HEALTH_COOL HEALTH_CHILLY    (Decrease Charging 0.3C Under 4V, Decrease Charging 0.2C Over 4V)
+	{100, 80, 4000},    // HEALTH_COOL HEALTH_CHILLY    (Decrease Charging 0.3C Under 4V, Decrease Charging 0.2C Over 4V)
+	{120, 80, 4000},    // HEALTH_GOOD HEALTH_CHILLY    (Up to Normal)
+	{150, 80, 4000},    // HEALTH_GOOD                  (HEALTH_CHILLY : Acordding to Battery Spec)
+	{200, 80, 4000},    // HEALTH_GOOD                  (HEALTH_CHIILY : Acordding to Battery Spec)
+	{250, 80, 4000},    // HEALTH_GOOD
+	{300, 80, 4000},    // HEALTH_GOOD
+	{350, 80, 4000},    // HEALTH_GOOD
+	{400, 80, 4000},    // HEALTH_GOOD
+	{430, 80, 4000},    // HEALTH_GOOD                  (Down to Normal)
+	{450, 80, 4000},    // HEALTH_WARM                  (Decrease Charging Under 4V, Charging Stop Over 4V)
+	{500, 80, 4000},    // HEALTH_WARM                  (Decrease Charging Under 4V, Charging Stop Over 4V)
+	{520, 80, 4000},    // HEALTH_WARM                  (Down to Warm)
+	{550, 80, 4000},    // HEALTH_HOT                   (Charging Stop)
+	{590, 80, 4000},    // HEALTH_HOT                   (VZW Cool Down Noti & Power Off Message)
+	{600, 80, 4000},    // HEALTH_HOT                   (Imediately Power Off)
+	{650, 80, 4000},    // HEALTH_HOT
+};
+
+static void debug_btp_polling_status_work(struct work_struct* work) {
+	struct power_supply* psy;
+	union power_supply_propval prp_temp, prp_capacity, prp_voltagenow;
+	static int tempstep = 0;
+	static bool voltagelevel = false;
+	static bool upward = true;
+	static int power_off_cnt = 0;
+	char buf[2] = {0, };
+
+	unified_nodes_show("fake_battery", buf);
+
+	if (unified_bootmode_chargerlogo() && !strcmp(buf, "0")) //enable debug_btp in chargerlogo
+		unified_nodes_store("fake_battery", "1", 1);
+
+	if (!strcmp(buf, "1")) {
+		if (power_off_cnt < BTP_POWER_OFF_CNT) {
+			if(tempstep >= BTP_POWER_OFF_WARNING_TEMP_IDX) {
+				upward = false;
+			} else if(tempstep <= 0) {
+				upward = true;
+				voltagelevel = !voltagelevel;
+				power_off_cnt++;
+			}
+		} else {
+			if(tempstep >= BTP_POWER_OFF_TEMP_IDX - 1) {
+				upward = false;
+			} else if(tempstep <= 0) {
+				upward = true;
+				voltagelevel = !voltagelevel;
+			}
+		}
+
+		psy = power_supply_get_by_name("bms");
+		if(!psy) {
+			schedule_delayed_work(to_delayed_work(work), msecs_to_jiffies(BTP_RECHECK_PERIOD));
+			return;
+		}
+
+		prp_temp.intval = debug_btp_table[tempstep].temp;
+		prp_capacity.intval = debug_btp_table[tempstep].capacity;
+		if (!voltagelevel)
+			prp_voltagenow.intval = (debug_btp_table[tempstep].voltage - 100) * 1000;
+		else
+			prp_voltagenow.intval = (debug_btp_table[tempstep].voltage + 100) * 1000;
+
+		pr_battemp(UPDATE, "temp = %d, capacity = %d, voltage = %d\n",
+				prp_temp.intval, prp_capacity.intval, prp_voltagenow.intval);
+		if (psy) {
+			power_supply_set_property(psy, POWER_SUPPLY_PROP_TEMP, &prp_temp);
+			power_supply_set_property(psy, POWER_SUPPLY_PROP_CAPACITY, &prp_capacity);
+			power_supply_set_property(psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &prp_voltagenow);
+			power_supply_put(psy);
+		}
+
+		if(upward)
+			tempstep++;
+		else
+			tempstep--;
+
+	} else {
+		; //Nothing To Do
+	}
+	schedule_delayed_work(to_delayed_work(work), msecs_to_jiffies(BTP_RECHECK_PERIOD));
+}
+#endif
 static const char* health_to_string(bool chilly, int jhealth) {
 	if (!chilly) {
 		switch (jhealth) {
@@ -189,11 +303,20 @@ static long health_to_period(bool chilly, int jhealth) {
 }
 
 static int icharge_by_chilly(bool chilly, int batvol) {
-	if (chilly)
-		return battemp_me.chilly_mv_alert <= batvol ?
-			battemp_me.chilly_ma_alert : battemp_me.chilly_ma_normal;
-	else
+	if (chilly) {
+		if(battemp_me.chilly_mv_hyst <= batvol) {
+			battemp_me.chilly_mv_hyst = battemp_me.chilly_mv_alert - battemp_me.chilly_mv_bound;
+			pr_battemp(ERROR, "make hysterisis voltage 4000 to 3800 mV\n");
+			return battemp_me.chilly_ma_alert;
+		} else {
+			battemp_me.chilly_mv_hyst = battemp_me.chilly_mv_alert;
+			pr_battemp(ERROR, "Not in hysterisis threshold 4000 mV\n");
+			return battemp_me.chilly_ma_normal;
+		}
+	} else {
+		battemp_me.chilly_mv_hyst = battemp_me.chilly_mv_alert;
 		return VOTE_TOTALLY_RELEASED;
+	}
 }
 
 static int icharge_by_jhealth(int jhealth, int batvol) {
@@ -347,9 +470,6 @@ static void polling_status_work(struct work_struct* work) {
 	int health_jeita, updated_icharge, updated_vfloat, updated_ichilly;
 	bool health_chilly, warning_at_charging, warning_wo_charging;
 
-	if (!battemp_me.enable)
-		return;
-
 	if (battemp_me.get_protection_battemp(&charging, &temperature, &mvoltage)) {
 		// Calculates icharge and vfloat from the jeita health
 		health_jeita = polling_status_jeita(battemp_me.health_jeita, temperature);
@@ -379,12 +499,12 @@ static void polling_status_work(struct work_struct* work) {
 
 		// logging for changes
 		if (battemp_me.health_chilly != health_chilly || battemp_me.health_jeita != health_jeita)
-			pr_battemp(UPDATE, "%s(%d) -> %s(%d), temperature=%d\n",
+			pr_battemp(UPDATE, "%s(%d) -> %s(%d), temperature=%d, mvoltage=%d\n",
 				health_to_string(battemp_me.health_chilly, battemp_me.health_jeita),
 					health_to_index(battemp_me.health_chilly, battemp_me.health_jeita),
 				health_to_string(health_chilly, health_jeita),
 					health_to_index(health_chilly, health_jeita),
-				temperature);
+				temperature, mvoltage);
 
 		// Voting for icharge and vfloat
 		veneer_voter_set(&battemp_me.voter_ichilly, updated_ichilly);
@@ -415,8 +535,6 @@ static bool battemp_create_parsedt(struct device_node* dnode, int mincap) {
 	int cool_ma_pct = 0, warm_ma_pct = 0;
 	int chilly_ma_pct = 0;
 
-	battemp_me.enable = of_property_read_bool(dnode,
-		"lge,protection-battemp-enable");
 	OF_PROP_READ_S32(dnode, battemp_me.threshold_degc_upto_cool,
 		"threshold-degc-upto-cool", rc);
 	OF_PROP_READ_S32(dnode, battemp_me.threshold_degc_upto_good,
@@ -459,6 +577,10 @@ static bool battemp_create_parsedt(struct device_node* dnode, int mincap) {
 			"chilly-degc-lowerbound", rc);
 		OF_PROP_READ_S32(dnode, battemp_me.chilly_degc_upperbound,
 			"chilly-degc-upperbound", rc);
+		OF_PROP_READ_S32(dnode, battemp_me.chilly_mv_hyst,
+			"chilly-mv-alert", rc);
+		OF_PROP_READ_S32(dnode, battemp_me.chilly_mv_bound,
+			"chilly-mv-bound", rc);
 		OF_PROP_READ_S32(dnode, battemp_me.chilly_mv_alert,
 			"chilly-mv-alert", rc);
 		OF_PROP_READ_S32(dnode, battemp_me.chilly_ma_alert,
@@ -494,22 +616,27 @@ static bool battemp_create_preset(bool (*feed_protection_battemp)(bool* charging
 
 	INIT_DELAYED_WORK(&battemp_me.battemp_dwork,
 		polling_status_work);
+#ifdef DEBUG_BTP
+	INIT_DELAYED_WORK(&battemp_me.debug_btp_dwork,
+		debug_btp_polling_status_work);
+#endif
 
 	return true;
 }
 
 void protection_battemp_monitor(void) {
-	if (!battemp_me.enable) {
-		battemp_me.health_jeita = POWER_SUPPLY_HEALTH_GOOD;
-		battemp_me.set_protection_battemp(battemp_me.health_jeita,
-				VOTE_TOTALLY_RELEASED, VOTE_TOTALLY_RELEASED);
-		return;
-	}
-
 	if (delayed_work_pending(&battemp_me.battemp_dwork))
 		cancel_delayed_work(&battemp_me.battemp_dwork);
 	schedule_delayed_work(&battemp_me.battemp_dwork, msecs_to_jiffies(0));
 }
+
+#ifdef DEBUG_BTP
+void debug_btp_monitor(void) {
+	if (delayed_work_pending(&battemp_me.debug_btp_dwork))
+		cancel_delayed_work(&battemp_me.debug_btp_dwork);
+	schedule_delayed_work(&battemp_me.debug_btp_dwork, msecs_to_jiffies(0));
+}
+#endif
 
 bool protection_battemp_create(struct device_node* dnode, int mincap,
 	bool (*feed_protection_battemp)(bool* charging, int* temperature, int* mvoltage),
@@ -532,6 +659,9 @@ bool protection_battemp_create(struct device_node* dnode, int mincap,
 	}
 
 	protection_battemp_monitor();
+#ifdef DEBUG_BTP
+	debug_btp_monitor();
+#endif
 	pr_battemp(UPDATE, "Complete to create\n");
 	return true;
 destroy:
@@ -542,6 +672,9 @@ destroy:
 void protection_battemp_destroy(void) {
 	wakeup_source_unregister(battemp_me.battemp_wakelock);
 	cancel_delayed_work_sync(&battemp_me.battemp_dwork);
+#ifdef DEBUG_BTP
+	cancel_delayed_work_sync(&battemp_me.debug_btp_dwork);
+#endif
 
 	veneer_voter_unregister(&battemp_me.voter_ichilly);
 	veneer_voter_unregister(&battemp_me.voter_icharge);
@@ -575,6 +708,8 @@ void protection_battemp_destroy(void) {
 	battemp_me.chilly_is_supported    = false;
 	battemp_me.chilly_degc_upperbound = BATTEMP_NOTREADY;
 	battemp_me.chilly_degc_lowerbound = BATTEMP_NOTREADY;
+	battemp_me.chilly_mv_hyst	  = BATTEMP_NOTREADY;
+	battemp_me.chilly_mv_bound	  = BATTEMP_NOTREADY;
 	battemp_me.chilly_mv_alert	  = BATTEMP_NOTREADY;
 	battemp_me.chilly_ma_alert	  = BATTEMP_NOTREADY;
 	battemp_me.chilly_ma_normal       = BATTEMP_NOTREADY;

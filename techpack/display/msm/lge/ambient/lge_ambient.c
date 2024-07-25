@@ -166,21 +166,24 @@ static ssize_t aod_interface_get(struct device *dev,
 static DEVICE_ATTR(aod_interface, S_IRUGO,
 		aod_interface_get, NULL);
 
-void lge_ambient_create_sysfs(struct dsi_panel *panel, struct class *class_panel)
-{
-	static struct device *aod_sysfs_dev = NULL;
+static struct attribute *ambient_attrs[] = {
+	&dev_attr_area.attr,
+	&dev_attr_power_mode.attr,
+	&dev_attr_aod_interface.attr,
+	NULL,
+};
 
-	if(!aod_sysfs_dev){
-		aod_sysfs_dev = device_create(class_panel, NULL, 0, panel, "aod");
-		if (IS_ERR(aod_sysfs_dev)) {
-			pr_err("Failed to create dev(aod_sysfs_dev)!");
-		} else {
-			if (device_create_file(aod_sysfs_dev, &dev_attr_area) < 0)
-				pr_err("add aod area node fail!");
-			if (device_create_file(aod_sysfs_dev, &dev_attr_power_mode) < 0)
-				pr_err("add aod power mode node fail!");
-			if (device_create_file(aod_sysfs_dev, &dev_attr_aod_interface) < 0)
-				pr_err("add aod interface node fail!");
+static const struct attribute_group ambient_attr_group = {
+	.name	= "aod",
+	.attrs	= ambient_attrs,
+};
+
+void lge_ambient_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev)
+{
+	if (panel_sysfs_dev) {
+		if (panel->lge.use_ambient) {
+			if (sysfs_create_group(&panel_sysfs_dev->kobj, &ambient_attr_group) < 0)
+				pr_err("create ambient group fail!");
 		}
 	}
 }

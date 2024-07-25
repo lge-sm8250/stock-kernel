@@ -75,6 +75,9 @@ struct pl_data {
 	struct power_supply	*batt_psy;
 	struct power_supply	*usb_psy;
 	struct power_supply	*dc_psy;
+#ifdef CONFIG_CHARGER_IDTP9222_V2
+	struct power_supply	*wls_psy;
+#endif
 	struct power_supply	*cp_master_psy;
 	struct power_supply	*cp_slave_psy;
 	int			charge_type;
@@ -117,11 +120,7 @@ enum {
 	FORCE_INOV_DISABLE_BIT	= BIT(1),
 };
 
-#ifdef CONFIG_LGE_PM
-static int debug_mask = PR_PARALLEL;
-#else
 static int debug_mask;
-#endif
 
 #define pl_dbg(chip, reason, fmt, ...)				\
 	do {								\
@@ -944,7 +943,6 @@ static int pl_fcc_main_vote_callback(struct votable *votable, void *data,
 
 #ifdef CONFIG_LGE_PM
 extern bool unified_bootmode_usermode(void);
-extern bool is_bad_pps_detected(void);
 #endif
 static int pl_fcc_vote_callback(struct votable *votable, void *data,
 			int total_fcc_ua, const char *client)
@@ -978,6 +976,17 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 		chip->cp_slave_disable_votable =
 			find_votable("CP_SLAVE_DISABLE");
 
+#ifdef CONFIG_CHARGER_IDTP9222_V2
+	if (!chip->wls_psy)
+		chip->wls_psy = power_supply_get_by_name("wireless");
+
+	if (chip->wls_psy) {
+		pval.intval = total_fcc_ua;
+		power_supply_set_property(chip->wls_psy,
+			POWER_SUPPLY_PROP_POWER_NOW, &pval);
+	}
+#endif
+
 	/*
 	 * CP charger current = Total FCC - Main charger's FCC.
 	 * Main charger FCC is userspace's override vote on main.
@@ -1010,17 +1019,10 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 				vote_override(chip->fcc_main_votable, "CC_MODE_VOTER", false, 0);
 			}
 			else if (total_fcc_ua >= min_cp_lim_ua) {
-				if (is_bad_pps_detected()){
-					pr_err("is_bad_operation_pps_ta true. not config cp.");
-					vote_override(chip->usb_icl_votable, "CC_MODE_VOTER", false, 0);
-					vote_override(chip->fcc_main_votable, "CC_MODE_VOTER", false, 0);
-					vote(chip->fcc_main_votable, "BAD_PPS_TA", true, total_fcc_ua);
-				}else{
-					vote(chip->cp_disable_votable, FCC_VOTER,
-							false, 0);
-					cp_configure_ilim(chip, FCC_VOTER,
-						(total_fcc_ua - min_fcc_main_ua) / 2);
-				}
+				vote(chip->cp_disable_votable, FCC_VOTER,
+						false, 0);
+				cp_configure_ilim(chip, FCC_VOTER,
+					(total_fcc_ua - min_fcc_main_ua) / 2);
 			}
 		}
 	}

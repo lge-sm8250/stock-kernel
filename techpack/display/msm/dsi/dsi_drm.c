@@ -22,7 +22,7 @@
 #define DEFAULT_PANEL_PREFILL_LINES	25
 
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
-extern char* get_ddic_name(void);
+extern char* get_ddic_name(struct dsi_display *display);
 #endif
 
 static struct dsi_display_mode_priv_info default_priv_info = {
@@ -1036,7 +1036,7 @@ int dsi_conn_post_kickoff(struct drm_connector *connector,
 	}
 
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
-	if(strcmp(get_ddic_name(), "dsi_sim_cmd")) {
+	if(strcmp(get_ddic_name(display), "dsi_sim_cmd")) {
 		rc = dsi_display_post_kickoff(display);
 		if (rc) {
 			pr_err("failed new post kickoff\n");

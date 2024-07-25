@@ -19,25 +19,28 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/syscalls.h>
+#include <linux/rtc.h>
+#include <linux/time.h>
 #include <linux/slab.h>
 #include <linux/fs_struct.h>
 #include <linux/platform_device.h>
-#define MODULE_NAME "lge_pon_backup"
 
-#define PON_DELAY_MS 10000
+#define MODULE_NAME "lge_pon_backup"
+#define PON_DELAY_MS 15000
 #define FTM_BLOCK_SIZE		4096
 #define FTM_PON_BACKUP_OFFSET 227
-#define FTM_PON_BACKUP_SIZE	488
+#define FTM_PON_BACKUP_SIZE 888
 
 #define PON_BACKUP_MAX_COUNT 10
-#define PON_BACKUP_MAX_PMIC 5
+#define PON_BACKUP_MAX_PMIC 3
 #define PON_BACKUP_MAX_OCP 3
-#define PON_BACKUP_MAX_REASON 3
 #define FTM_PATH "/dev/block/bootdevice/by-name/ftm"
 
 struct lge_pon_backup_data {
 	struct delayed_work lge_pon_backup_dwork;
+	int retry_count;
 	u32 regulator_num[PON_BACKUP_MAX_PMIC * 3];
+	const char *pmic_name[PON_BACKUP_MAX_PMIC];
 };
 
 static const char * const qpnp_pon_reason_groups[] = {
@@ -71,8 +74,17 @@ static const char * const qpnp_ocp_reasons[] = {
 };
 
 typedef struct {
+  uint64_t pon_reg[PON_BACKUP_MAX_PMIC];
+  uint64_t fault_reg[PON_BACKUP_MAX_PMIC];
+  uint64_t ocp_occur[PON_BACKUP_MAX_PMIC];
+  uint32_t entry_soc;
+  uint32_t entry_volt;
+  uint32_t entry_rtc;
+} backup_data_type;
+
+typedef struct {
   uint32_t count;
-  uint64_t pon_reg[PON_BACKUP_MAX_COUNT][PON_BACKUP_MAX_PMIC][PON_BACKUP_MAX_REASON];
+  backup_data_type data[PON_BACKUP_MAX_COUNT];
 } pon_backup_type;
 
 static int lge_get_pon_backup(pon_backup_type *now_pon)
@@ -93,7 +105,7 @@ static int lge_get_pon_backup(pon_backup_type *now_pon)
 	path_put(&root);
 
 	if(IS_ERR(fp)){
-		pr_err("Unable to open FTM (%d)\n", PTR_ERR(fp));
+		pr_err("Unable to open FTM (%ld)\n", PTR_ERR(fp));
 		pon_count = -1;
 		goto err;
 	}
@@ -111,7 +123,7 @@ static int lge_get_pon_backup(pon_backup_type *now_pon)
 	else
 		pon_count = now_pon->count;
 
-	pr_info("FTM Size %d, pon count %d", sizeof(*now_pon), now_pon->count);
+	pr_info("FTM Size %ld, pon count %d", sizeof(*now_pon), now_pon->count);
 	now_pon->count = 0;
 	fp->f_pos = FTM_PON_BACKUP_OFFSET * FTM_BLOCK_SIZE; // LGFTM_PON_BACK_UP offset
 	cnt = vfs_write(fp, (char*)now_pon, sizeof(*now_pon), &fp->f_pos);
@@ -134,20 +146,55 @@ static void lge_pon_backup_func(struct work_struct *w)
 	struct lge_pon_backup_data *pon_backup = container_of(to_delayed_work(w),
 		struct lge_pon_backup_data, lge_pon_backup_dwork);
 	pon_backup_type now_pon = {0, };
+	backup_data_type* now_data = NULL;
 	int i, j, count, index = 0, pre_index = -8, reg_index, ocp_index;
-	char buf[PM_STATUS_MSG_LEN] = "";
+	char buf[PM_STATUS_MSG_LEN] = " ";
 	char num[10] = "";
 	uint64_t pon_reg, fault_reg, ocp_reg;
+	struct tm tm = {0,};
+	struct timespec time = {0,};
+	struct rtc_time rtc_tm = {0, };
+	struct rtc_device *rtc;
+	time64_t now_time;
+	int rc;
 
 	count = lge_get_pon_backup(&now_pon);
-	if (count < -1)
+	if (count < 0) {
+		if (pon_backup->retry_count < 5) {
+			pon_backup->retry_count++;
+			schedule_delayed_work(&pon_backup->lge_pon_backup_dwork,
+				msecs_to_jiffies(PON_DELAY_MS));
+		}
 		return;
+	}
 
-	for (i = 0; i < count; i++)
+	rtc = rtc_class_open(CONFIG_RTC_HCTOSYS_DEVICE);
+	if (rtc == NULL) {
+		pr_err("Failed to open rtc device (%s)\n",
+				CONFIG_RTC_HCTOSYS_DEVICE);
+		return;
+	}
+	rc = rtc_read_time(rtc, &rtc_tm);
+	if (rc < 0)
+		pr_err("rtc read time error.\n");
+
+	now_time = rtc_tm_to_time64(&rtc_tm);
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	now_time -= mktime(CONFIG_LGE_RTC_START_YEAR, 1, 1, 0, 0, 0);
+#endif
+	time = __current_kernel_time();
+
+	for (i = 0; i < count; i++) {
+		now_data = &now_pon.data[i];
+		time_to_tm(time.tv_sec - now_time + now_data->entry_rtc, sys_tz.tz_minuteswest * 60 * (-1), &tm);
+		pr_info("power on/off reason boot[%d] soc = %d, vol =%d, rtc = %d-%02d-%02d %02d:%02d:%02d(%d)\n",
+			i, now_data->entry_soc, now_data->entry_volt,
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, now_data->entry_rtc);
+
 		for (j = 0; j < PON_BACKUP_MAX_PMIC; j++) {
-			pon_reg = now_pon.pon_reg[i][j][0];
-			fault_reg = now_pon.pon_reg[i][j][1];
-			ocp_reg = now_pon.pon_reg[i][j][2];
+			pon_reg = now_data->pon_reg[j];
+			fault_reg = now_data->fault_reg[j];
+			ocp_reg = now_data->ocp_occur[j];
 			pr_debug("Pon reg boot[%d] pm%d=0x%llx:0x%llx-0x%llx\n", i, j, pon_reg, fault_reg, ocp_reg);
 
 			if (pon_reg == 0 && fault_reg == 0 && ocp_reg == 0)
@@ -202,11 +249,14 @@ static void lge_pon_backup_func(struct work_struct *w)
 				index++;
 			}
 
-			pr_info("power on/off reason boot[%d] pm%d=%s\n", i, j, buf);
+			pr_info("power on/off reason boot[%d] pm%d(%09s)=%s\n", i, j, pon_backup->pmic_name[j], buf);
 			snprintf(buf, sizeof(buf), "");
 			index = 0;
 			pre_index = -8;
 		}
+	}
+
+	rtc_class_close(rtc);
 
 	return;
 };
@@ -228,11 +278,20 @@ static int lge_pon_backup_probe(struct platform_device *pdev)
 	rc = of_property_read_u32_array(node, "lge,regulator-table", pon_backup->regulator_num,
 			PON_BACKUP_MAX_PMIC * 3);
 	if (rc) {
-		pr_err("Fail to get dt of regulator table.\n");
+		pr_err("Fail to get dt of regulator table. rc = %d\n", rc);
 		kfree(pon_backup);
 		return -EIO;
 	}
 
+	rc = of_property_read_string_array(node, "lge,pmic-name", pon_backup->pmic_name,
+			PON_BACKUP_MAX_PMIC);
+	if (rc < 0) {
+		pr_err("Fail to get dt of pmic name. rc = %d\n", rc);
+		kfree(pon_backup);
+		return -EIO;
+	}
+
+	pon_backup->retry_count = 0;
 	INIT_DELAYED_WORK(&pon_backup->lge_pon_backup_dwork,
 		lge_pon_backup_func);
 	schedule_delayed_work(&pon_backup->lge_pon_backup_dwork,

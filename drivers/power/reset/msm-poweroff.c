@@ -83,7 +83,6 @@ struct lge_poweroff_timeout_struct {
 };
 #endif
 
-
 static int in_panic;
 static int dload_type = SCM_DLOAD_FULLDUMP;
 #ifndef CONFIG_LGE_HANDLE_PANIC
@@ -536,8 +535,10 @@ static void msm_restart_prepare(const char *cmd)
 	bool need_warm_reset = false;
 #ifdef CONFIG_LGE_PSTORE_BACKUP
 	pr_notice("reset cmd : %s\n", cmd);
-	need_warm_reset = true;
+	if(restart_mode != RESTART_DLOAD)
+		need_warm_reset = true;
 #endif
+
 	/* Write download mode flags if we're panic'ing
 	 * Write download mode flags if restart_mode says so
 	 * Kill download mode if master-kill switch is set
@@ -617,6 +618,16 @@ static void msm_restart_prepare(const char *cmd)
 								PON_RESTART_REASON_LCD_OFF);
 				__raw_writel(0x77665562, restart_reason);
 #endif
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_BAN_CRACK_PANEL_SUPPORT)
+		} else if (!strncmp(cmd, "ban prim display", 16)) {
+				qpnp_pon_set_restart_reason(
+								PON_RESTART_REASON_BAN_PRIM_DISPLAY);
+				__raw_writel(0x7766556B, restart_reason);
+		} else if (!strncmp(cmd, "ban sec display", 15)) {
+				qpnp_pon_set_restart_reason(
+								PON_RESTART_REASON_BAN_SEC_DISPLAY);
+				__raw_writel(0x7766556C, restart_reason);
+#endif
 		} else if (!strncmp(cmd, "opid mismatched", 15)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_OPID_MISMATCHED);
@@ -657,6 +668,7 @@ static void msm_restart_prepare(const char *cmd)
 			if (!ret)
 				__raw_writel(0x6f656d00 | (code & 0xff),
 					     restart_reason);
+
 #ifdef CONFIG_LGE_PM
 			if (!ret && code == 0x11)
 				qpnp_pon_set_restart_reason(
@@ -683,6 +695,7 @@ static void msm_restart_prepare(const char *cmd)
 			PON_RESTART_REASON_NORMAL);
 		__raw_writel(0x77665501, restart_reason);
 	}
+#endif
 
 #ifdef CONFIG_LGE_PSTORE_BACKUP
 	/* Hard reset the PMIC unless memory contents must be maintained. */
@@ -691,6 +704,7 @@ static void msm_restart_prepare(const char *cmd)
 	else
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 #endif
+#ifdef CONFIG_LGE_HANDLE_PANIC
 	if (restart_mode == RESTART_DLOAD) {
 		set_dload_mode(0);
 #ifdef CONFIG_LGE_USB_GADGET
@@ -790,7 +804,6 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	 * Trigger a watchdog bite here and if this fails,
 	 * device will take the usual restart path.
 	 */
-
 	if (WDOG_BITE_ON_PANIC && in_panic && restart_mode != RESTART_DLOAD)
 		msm_trigger_wdog_bite();
 

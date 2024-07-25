@@ -2609,28 +2609,22 @@ void mmc_power_up(struct mmc_host *host, u32 ocr)
 	 * This delay must be at least 74 clock sizes, or 1 ms, or the
 	 * time required to reach a stable voltage.
 	 */
-#ifdef CONFIG_LFS_MMC
-	/* LGE_CHANGE, Augmenting delay-time for some crappy card.
-	 */
-	mmc_delay(host->ios.power_delay_ms * 2);
-#else
 	mmc_delay(host->ios.power_delay_ms);
-#endif
 }
 
 void mmc_power_off(struct mmc_host *host)
 {
 	if (host->ios.power_mode == MMC_POWER_OFF)
-	#ifdef CONFIG_LFS_MMC
+#ifdef CONFIG_LFS_MMC
 	/* If it is already power-off, skip below.
 	 */
 	{
 		printk(KERN_INFO "[LGE][MMC][%-18s( )] host->index:%d, already power-off, skip below\n", __func__, host->index);
 		return;
 	}
-	#else
+#else
 		return;
-	#endif
+#endif
 
 	mmc_pwrseq_power_off(host);
 
@@ -3602,9 +3596,9 @@ int _mmc_detect_card_removed(struct mmc_host *host)
 		pr_debug("%s: card remove detected\n", mmc_hostname(host));
 	}
 
-	#ifdef CONFIG_LFS_MMC
+#ifdef CONFIG_LFS_MMC
 	printk(KERN_INFO "[LGE][MMC][%-18s( )] end, mmc%d, return %d\n", __func__, host->index, ret);
-	#endif
+#endif
 
 	return ret;
 }
@@ -3664,7 +3658,6 @@ void mmc_rescan(struct work_struct *work)
 	unsigned long flags;
 	struct mmc_host *host =
 		container_of(work, struct mmc_host, detect.work);
-
 #ifdef CONFIG_LFS_MMC
 	int err = 0;
 #endif
@@ -3729,17 +3722,11 @@ void mmc_rescan(struct work_struct *work)
 	}
 
 #ifdef CONFIG_LFS_MMC
-	/* keep last error */
 	err = mmc_rescan_try_freq(host, host->f_min);
 #else
 	mmc_rescan_try_freq(host, host->f_min);
 #endif
-#ifdef CONFIG_LFS_MMC
-	printk(KERN_INFO "[LGE][MMC][%-18s( )] mmc%d: reset MMC error stats\n", __func__, host->index);
-    memset(host->err_stats, 0, sizeof(host->err_stats));
-#else
 	host->err_stats[MMC_ERR_CMD_TIMEOUT] = 0;
-#endif
 	mmc_release_host(host);
 
 #ifdef CONFIG_LFS_MMC

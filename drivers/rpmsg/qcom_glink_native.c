@@ -1235,15 +1235,14 @@ static irqreturn_t qcom_glink_native_intr(int irq, void *data)
 	unsigned int cmd;
 	int ret = 0;
 
+	/* To wakeup any blocking writers */
+	wake_up_all(&glink->tx_avail_notify);
 
 #ifdef CONFIG_LGE_PM
 	if (suspend_debug_irq_pin()) {
 		schedule_work(&glink->irq_work);
 	}
 #endif
-
-	/* To wakeup any blocking writers */
-	wake_up_all(&glink->tx_avail_notify);
 
 	for (;;) {
 		avail = qcom_glink_rx_avail(glink);
@@ -2173,9 +2172,7 @@ void qcom_glink_native_remove(struct qcom_glink *glink)
 	subsys_unregister_early_notifier(glink->name, XPORT_LAYER_NOTIF);
 	qcom_glink_notif_reset(glink);
 	disable_irq(glink->irq);
-
 	qcom_glink_cancel_rx_work(glink);
-	cancel_work_sync(&glink->rx_work);
 #ifdef CONFIG_LGE_PM
 	cancel_work_sync(&glink->irq_work);
 #endif

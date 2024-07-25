@@ -120,7 +120,6 @@ struct gadget_info {
 	bool sw_connected;
 	struct work_struct work;
 	struct device *dev;
-	ktime_t last_disconnect;
 #endif
 };
 
@@ -422,7 +421,7 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 	mutex_unlock(&gi->lock);
 #ifdef CONFIG_LGE_USB_GADGET
 	if (gi->composite.gadget_driver.udc_name) {
-		pr_info("%s [%s] VID(0x%04X), PID(0x%04X)\n", __func__,
+		pr_info("%s [%s] VID(0x%04hX), PID(0x%04hX)\n", __func__,
 			gi->composite.gadget_driver.udc_name,
 			cdev->desc.idVendor,
 			cdev->desc.idProduct);
@@ -1613,7 +1612,6 @@ static void android_work(struct work_struct *data)
 	bool status[3] = { false, false, false };
 	unsigned long flags;
 	bool uevent_sent = false;
-	ktime_t diff;
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
@@ -1672,19 +1670,16 @@ static void android_work(struct work_struct *data)
 				!firstboot_check)  &&
 				lge_get_cc_type_debug_accessory() &&
 				lge_get_cable_type() == 910) {
-					diff = ktime_sub(ktime_get(), gi->last_disconnect);
-					if(ktime_to_ms(diff) > 5000) {
-						usb_gadget_disconnect(cdev->gadget);
-						usb_ep_dequeue(cdev->gadget->ep0, cdev->req);
-						pr_info("[FACTORY] reset due to 910K cable, pm:%d, xbl:%d, firstboot_check:%d\n",
-										lge_get_cable_type(), lge_get_boot_cable(), firstboot_check);
+			usb_gadget_disconnect(cdev->gadget);
+			usb_ep_dequeue(cdev->gadget->ep0, cdev->req);
+			pr_info("[FACTORY] reset due to 910K cable, pm:%d, xbl:%d, firstboot_check:%d\n",
+				lge_get_cable_type(), lge_get_boot_cable(), firstboot_check);
 
-						msleep(50); // wait for usb gadget disconnect
+			msleep(50); // wait for usb gadget disconnect
 
-						msm_set_restart_mode(RESTART_DLOAD);
-						kernel_restart(NULL);
-					}
-				}
+			msm_set_restart_mode(RESTART_DLOAD);
+			kernel_restart(NULL);
+		}
 	}
 
 	if (status[1] &&
@@ -1693,12 +1688,6 @@ static void android_work(struct work_struct *data)
 		pr_info("[cable info] boot_mode:%d, dlcomplete:%d\n",
 			lge_get_boot_mode(), lge_get_android_dlcomplete());
 		firstboot_check = 0;
-	}
-
-	//disconnected
-	if(status[2]) {
-		if(lge_get_cable_type() == 910)
-			gi->last_disconnect = ktime_get();
 	}
 #endif
 #ifdef CONFIG_LGE_PM

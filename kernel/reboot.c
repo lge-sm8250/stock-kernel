@@ -308,6 +308,7 @@ void kernel_power_off_timeout(void)
 	machine_power_off_timeout();
 }
 #endif
+
 DEFINE_MUTEX(system_transition_mutex);
 
 /*

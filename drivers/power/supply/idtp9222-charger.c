@@ -66,7 +66,13 @@ do {								\
 #ifdef CONFIG_LGE_PM_VENEER_PSY
 #include "lge/veneer-primitives.h"
 #endif
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
+#define IDP9222_FEATURE_INPUT_SUSPEND_AFTER_EOC
+#define IDP9222_FEATURE_SILENT_RECHARGING
+#define WIRELESS_PAD_W815A 0x63
 // Constants
 #define IDTP9222_NAME_COMPATIBLE	"idt,p9222-charger"
 #define IDTP9222_NAME_DRIVER		"idtp9222-charger"
@@ -84,6 +90,8 @@ do {								\
 #define REG_ADDR_VADC_M		0x43
 #define REG_ADDR_IADC_L		0x44
 #define REG_ADDR_IADC_M		0x45
+#define REG_ADDR_OPFREQ_L	0x48
+#define REG_ADDR_OPFREQ_H	0x49
 #define REG_ADDR_OPMODE		0x4C
 #define REG_ADDR_COMMAND	0x4E
 #define REG_ADDR_TXID		0xC2
@@ -140,7 +148,9 @@ struct idtp9222_struct {
 	struct i2c_client*	wlc_client;
 	struct votable*		wlc_disable;
 	struct votable*		wlc_voltage;
+#ifdef IDP9222_FEATURE_INPUT_SUSPEND_AFTER_EOC
 	struct votable*		wlc_suspend;
+#endif
 	struct votable*		dc_icl_votable;
 	struct device* 		wlc_device;
 	struct wakeup_source	*wlc_wakelock;
@@ -161,6 +171,7 @@ struct idtp9222_struct {
 	int			capacity;
 	int			capacity_raw;
 	int			temperature;
+	int			txid;
 	/* onpad flags */
 	enum idtp9222_opmode	opmode_type;		// WPC or PMA
 	bool			opmode_midpower;	// 9W or 5W
@@ -426,8 +437,11 @@ static bool idtp9222_set_fod(struct idtp9222_struct* idtp9222) {
 }
 
 static bool idtp9222_set_full(struct idtp9222_struct* idtp9222) {
+#ifdef CONFIG_QPNP_QG
+	bool full = (idtp9222->capacity >= idtp9222->configure_rawfull);
+#else
 	bool full = (idtp9222->capacity_raw >= idtp9222->configure_rawfull);
-
+#endif
 	if (idtp9222_is_full(idtp9222) == full) {
 		pr_idt(IDT_VERBOSE, "status full is already set to %d\n", full);
 		return false;
@@ -554,6 +568,17 @@ static bool idtp9222_is_enabled(struct idtp9222_struct* idtp9222) {
 	return status;
 }
 
+#ifdef CONFIG_QPNP_QG
+static bool idtp9222_is_done(struct idtp9222_struct* idtp9222) {
+
+	if (!idtp9222_is_onpad(idtp9222))
+		return false;
+
+	/*  we keep UiSoc 100% after EOC */
+	return idtp9222->status_done;
+}
+#endif
+
 static bool idtp9222_is_full(struct idtp9222_struct* idtp9222) {
 	if (idtp9222_is_onpad(idtp9222)) {
 		return idtp9222->status_full;
@@ -566,7 +591,6 @@ static bool idtp9222_is_full(struct idtp9222_struct* idtp9222) {
 	}
 }
 
-
 /*
  * IDTP9222 power_supply getter & setter
  */
@@ -577,6 +601,7 @@ static enum power_supply_property psy_property_list[] = {
 	POWER_SUPPLY_PROP_CHARGE_DONE,
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_INPUT_SUSPEND,
+	POWER_SUPPLY_PROP_BUCK_FREQ,
 	POWER_SUPPLY_PROP_DEBUG_BATTERY,
 };
 
@@ -593,7 +618,13 @@ static bool psy_set_charge_done(struct idtp9222_struct* idtp9222, bool done) {
 
 	pr_idt(IDT_INTERRUPT, "charge_done is %s charging!\n",
 		done ? "true, stop" : "false, start");
-	vote(idtp9222->wlc_suspend, DISABLE_BY_EOC, done, 0);
+#ifdef IDP9222_FEATURE_INPUT_SUSPEND_AFTER_EOC
+	if (idtp9222->txid == WIRELESS_PAD_W815A) {
+		vote(idtp9222->wlc_disable, DISABLE_BY_EOC, done, 0);
+	} else {
+		vote(idtp9222->wlc_suspend, DISABLE_BY_EOC, done, 0);
+	}
+#endif
 
 	if (done && delayed_work_pending(&idtp9222->timer_setoff))
 		cancel_delayed_work(&idtp9222->timer_setoff);
@@ -657,10 +688,7 @@ static int psy_property_set(struct power_supply* psy,
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
 		psy_set_suspend(idtp9222, !!val->intval);
 		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX: /* mV */
-		psy_set_voltage_max(idtp9222, val->intval * 1000);
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN: /* uV */
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 //	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION:
 		psy_set_voltage_max(idtp9222, val->intval);
 		break;
@@ -691,14 +719,6 @@ static int psy_get_power(struct idtp9222_struct* idtp9222) {
 	return power;
 }
 
-static int psy_get_current_max(struct idtp9222_struct* idtp9222) {
-	if (idtp9222_is_onpad(idtp9222))
-		return idtp9222->opmode_midpower
-			? idtp9222->configure_eppcurr : idtp9222->configure_bppcurr;
-	else
-		return 0;
-}
-
 static int psy_get_current_now(struct idtp9222_struct* idtp9222) {
 	u8 value = -1;
 	int result = 0;
@@ -713,14 +733,6 @@ static int psy_get_current_now(struct idtp9222_struct* idtp9222) {
 	return result;
 }
 
-static int psy_get_voltage_max(struct idtp9222_struct* idtp9222) {
-	if (idtp9222_is_onpad(idtp9222))
-		return idtp9222->opmode_midpower
-			? idtp9222->configure_eppvolt : idtp9222->configure_bppvolt;
-	else
-		return 0;
-}
-
 static int psy_get_voltage_now(struct idtp9222_struct* idtp9222) {
 	u8 value = -1;
 	int result = 0;
@@ -729,6 +741,20 @@ static int psy_get_voltage_now(struct idtp9222_struct* idtp9222) {
 		idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_VADC_M, &value);
 		result = value << 8;
 		idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_VADC_L, &value);
+		result |= value;
+	}
+
+	return result;
+}
+
+static int psy_get_opfreq_now(struct idtp9222_struct* idtp9222) {
+	u8 value = -1;
+	int result = 0;
+
+	if (idtp9222_is_onpad(idtp9222) && idtp9222_reg_check(idtp9222)) {
+		idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_OPFREQ_H, &value);
+		result = value << 8;
+		idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_OPFREQ_L, &value);
 		result |= value;
 	}
 
@@ -761,31 +787,33 @@ static int psy_property_get(struct power_supply* psy,
 		val->intval = psy_get_power(idtp9222);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
-		val->intval = psy_get_current_max(idtp9222);
+		val->intval = get_effective_result(idtp9222->dc_icl_votable);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = psy_get_current_now(idtp9222);
 		break;
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		val->intval = get_effective_result(idtp9222->dc_icl_votable);
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
-		val->intval = psy_get_voltage_max(idtp9222);
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 		val->intval = get_effective_result(idtp9222->wlc_voltage);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		val->intval = psy_get_voltage_now(idtp9222);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_DONE:
+#ifdef CONFIG_QPNP_QG
+		val->intval = idtp9222_is_done(idtp9222);
+#else
 		val->intval = idtp9222_is_full(idtp9222);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 		val->intval = idtp9222_is_enabled(idtp9222);
 		break;
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
 		val->intval = !idtp9222_is_enabled(idtp9222);
+		break;
+	case POWER_SUPPLY_PROP_BUCK_FREQ:
+		/* AC Signal Frequency on the coil in kHz*/
+		val->intval = psy_get_opfreq_now(idtp9222);
 		break;
 	case POWER_SUPPLY_PROP_DEBUG_BATTERY:
 		/* Do nothing and just consume getting */
@@ -805,7 +833,6 @@ static int psy_property_writeable(struct power_supply* psy,
 
 	switch (prop) {
 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		rc = 1;
 		break;
 	default:
@@ -868,6 +895,7 @@ static bool psy_set_onpad(struct idtp9222_struct* idtp9222, bool onpad) {
 		idtp9222->opmode_midpower = false;
 		idtp9222->status_full = false;
 		psy_set_charge_done(idtp9222, false);
+		idtp9222->txid = 0;
 	}
 
 	if (idtp9222->status_onpad != onpad) {
@@ -883,6 +911,9 @@ static bool psy_set_onpad(struct idtp9222_struct* idtp9222, bool onpad) {
 
 #define UNVOTING_TIMER_MS	5000
 #define OFFLINE_TIMER_MS	5000
+#ifdef IDP9222_FEATURE_SILENT_RECHARGING
+#define SILENT_OFFLINE_TIMER_MS	30*1000
+#endif
 static bool psy_set_dcin(struct idtp9222_struct* idtp9222, bool dcin) {
 	if (idtp9222->status_dcin != dcin) {
 		idtp9222->status_dcin = dcin;
@@ -930,16 +961,42 @@ static bool psy_set_dcin(struct idtp9222_struct* idtp9222, bool dcin) {
 		return false;
 }
 
+#ifdef CONFIG_QPNP_QG
+#define MONITOR_SOC_LEVEL 95
+#endif
+
 static bool psy_set_capacity(struct idtp9222_struct* idtp9222, int capacity) {
 	if (idtp9222->capacity == capacity) {
 		pr_idt(IDT_VERBOSE, "status_capacity is already set to %d\n", capacity);
 		return false;
 	}
 
+#ifdef CONFIG_QPNP_QG
+	if (capacity > MONITOR_SOC_LEVEL)
+		pr_idt(IDT_UPDATE,"capacity:%d (old:%d)\n",capacity,idtp9222->capacity);
+#endif
+
 	idtp9222->capacity = capacity;
 
 	if (idtp9222_is_onpad(idtp9222))
 		idtp9222_set_capacity(idtp9222);
+
+#ifdef CONFIG_QPNP_QG
+	/*send EPT/CS100 packet when ui soc is 100%*/
+	if (idtp9222_is_onpad(idtp9222))
+		idtp9222_set_full(idtp9222);
+
+	if (idtp9222->capacity >= idtp9222->configure_rawfull) {
+		vote(idtp9222->dc_icl_votable, WLC_CS100_VOTER, true,
+			idtp9222->configure_fullcurr);
+		vote(idtp9222->wlc_voltage, WLC_CS100_VOTER, true,
+			idtp9222->configure_bppvolt);
+	}
+	else {
+		vote(idtp9222->dc_icl_votable, WLC_CS100_VOTER, false, 0);
+		vote(idtp9222->wlc_voltage, WLC_CS100_VOTER, false, 0);
+	}
+#endif
 
 	return true;
 }
@@ -950,8 +1007,14 @@ static bool psy_set_capacity_raw(struct idtp9222_struct* idtp9222, int capacity_
 		return false;
 	}
 
+#ifdef CONFIG_QPNP_QG
+	if (capacity_raw > MONITOR_SOC_LEVEL)
+		pr_idt(IDT_UPDATE,"capacity_raw:%d (old:%d)\n",capacity_raw,idtp9222->capacity_raw);
+#endif
+
 	idtp9222->capacity_raw = capacity_raw;
 
+#ifndef CONFIG_QPNP_QG
 	if (idtp9222_is_onpad(idtp9222))
 		idtp9222_set_full(idtp9222);
 
@@ -965,6 +1028,7 @@ static bool psy_set_capacity_raw(struct idtp9222_struct* idtp9222, int capacity_
 		vote(idtp9222->dc_icl_votable, WLC_CS100_VOTER, false, 0);
 		vote(idtp9222->wlc_voltage, WLC_CS100_VOTER, false, 0);
 	}
+#endif
 
 	if (idtp9222->configure_chargedone) {
 		if (idtp9222->status_done
@@ -1023,9 +1087,11 @@ static void psy_external_changed(struct power_supply* psy_me) {
 		power_supply_put(psy_dc);
 	}
 	if (psy_battery) {
+		/*get ui_soc (qg:msoc/100%/maint_soc, fg:scaled_msoc)*/
 		if (!power_supply_get_property(psy_battery, POWER_SUPPLY_PROP_CAPACITY, &value))
 			psy_set_capacity(idtp9222, value.intval);
 
+		/*get msoc*/
 		if (!power_supply_get_property(psy_battery, POWER_SUPPLY_PROP_CAPACITY_RAW, &value))
 			psy_set_capacity_raw(idtp9222, value.intval);
 
@@ -1054,6 +1120,7 @@ static void idtp9222_worker_onpad(struct work_struct* work) {
 
 	// 3. Check TxID and Finalized information
 	idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_TXID, &value);
+	idtp9222->txid = value;
 	pr_idt(IDT_REGISTER, "Finally, TX id = 0x%02x = %s%s\n", value,
 		idtp9222_modename(idtp9222->opmode_type),
 		idtp9222->opmode_type == UNKNOWN ? "" :
@@ -1075,12 +1142,36 @@ static void idtp9222_timer_maxinput(struct work_struct* work) {
 	rerun_election(idtp9222->wlc_voltage);
 }
 
+#ifdef IDP9222_FEATURE_SILENT_RECHARGING
+#define RECHARGING_SOC_MARGIN	1
+static bool idtp9222_is_silent_recharging_time(struct idtp9222_struct* idtp9222) {
+	struct power_supply* psy_bms = power_supply_get_by_name("bms");
+	union power_supply_propval value = { .intval = 0, };
+
+	if (power_supply_get_property(psy_bms, POWER_SUPPLY_PROP_CHARGE_DONE, &value))
+		return false;
+
+	if (value.intval)
+		return true;
+	else
+		return false;
+}
+#endif
+
 #define RECOVERY_TIMER_MS	1000
 static void idtp9222_timer_setoff(struct work_struct* work) {
 	struct idtp9222_struct* idtp9222 = container_of(work,
 		struct idtp9222_struct, timer_setoff.work);
 
 	if (idtp9222_is_onpad(idtp9222) && !idtp9222->status_dcin) {
+#ifdef IDP9222_FEATURE_SILENT_RECHARGING
+		if (idtp9222_is_silent_recharging_time(idtp9222)){
+			pr_idt(IDT_UPDATE, "FOD Detection! But silent recharing \n");
+			schedule_delayed_work(&idtp9222->timer_setoff,
+				round_jiffies_relative(msecs_to_jiffies(SILENT_OFFLINE_TIMER_MS)));
+			return;
+		}
+#endif
 		pr_idt(IDT_UPDATE, "FOD Detection!\n");
 		psy_set_onpad(idtp9222, false);
 	}
@@ -1162,19 +1253,17 @@ static void idtp9222_polling_log(struct work_struct* work) {
 static int idtp9222_disable_callback(struct votable *votable, void *data,
 	int disabled, const char *client) {
 	struct idtp9222_struct* idtp9222 = data;
-	u8 txid = -1;
 
 	if (idtp9222_is_onpad(idtp9222)
 		&& disabled
-		&& idtp9222_reg_read(idtp9222->wlc_client, REG_ADDR_TXID, &txid)
-		&& txid == 0x63) {
+		&& idtp9222->txid == WIRELESS_PAD_W815A) {
 		pr_idt(IDT_MONITOR, "Send EPT_BY_NORESPONSE for normal stop\n");
 		idtp9222_reg_write(idtp9222->wlc_client, REG_ADDR_EPT, EPT_BY_NORESPONSE);
 		idtp9222_reg_write(idtp9222->wlc_client, REG_ADDR_COMMAND, SEND_EPT);
 	}
 
 	gpiod_set_value(gpio_to_desc(idtp9222->gpio_disabled), !!disabled);
-	if (disabled && strcmp(client, DISABLE_BY_WA))
+	if (disabled && (strcmp(client, DISABLE_BY_WA) && strcmp(client, DISABLE_BY_EOC)))
 		psy_set_onpad(idtp9222, false);
 
 	msleep(20);
@@ -1230,7 +1319,7 @@ static int idtp9222_voltage_callback(struct votable *votable, void *data,
 
 	return 0;
 }
-
+#ifdef IDP9222_FEATURE_INPUT_SUSPEND_AFTER_EOC
 static int idtp9222_suspend_callback(struct votable *votable, void *data,
 	int suspend, const char *client) {
 	struct power_supply* psy_dc = power_supply_get_by_name("dc");
@@ -1246,7 +1335,7 @@ static int idtp9222_suspend_callback(struct votable *votable, void *data,
 
 	return 0;
 }
-
+#endif
 static irqreturn_t idtp9222_isr_idtfault(int irq, void* data) {
 	/* This ISR will be triggered on below unrecoverable exceptions :
 	 * Over temperature, Over current, or Over voltage detected by IDTP922X chip.
@@ -1326,6 +1415,7 @@ static bool idtp9222_probe_votables(struct idtp9222_struct* idtp9222) {
 		return false;
 	}
 
+#ifdef IDP9222_FEATURE_INPUT_SUSPEND_AFTER_EOC
 	idtp9222->wlc_suspend = create_votable("WLC_SUSPEND",
 		VOTE_SET_ANY,
 		idtp9222_suspend_callback,
@@ -1335,19 +1425,34 @@ static bool idtp9222_probe_votables(struct idtp9222_struct* idtp9222) {
 		idtp9222->wlc_suspend = NULL;
 		return false;
 	}
+#endif
 
 	return true;
 }
 
+#ifdef CONFIG_QPNP_QG
+#define DEFAULT_AUTO_RECHARGE_SOC	98
+#define DEFAULT_CAPACITY_RAW_FULL	100
+#else
+#define DEFAULT_AUTO_RECHARGE_SOC	249
+#define DEFAULT_CAPACITY_RAW_FULL	247
+#endif
+
 static bool idtp9222_probe_devicetree(struct device_node* dnode,
 	struct idtp9222_struct* idtp9222) {
-	struct device_node* battery_supp =
-		of_find_node_by_name(NULL, "lge-battery-supplement");
+	struct device_node* battery_supp = NULL;
 	struct device_node* charger_supp =
 		of_find_node_by_name(NULL, "qcom,qpnp-smb5");
 	const char* arr = NULL;
 	int i, buf = -1;
-
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+	if(HW_SKU_NA_CDMA_VZW == lge_get_sku_carrier())
+		battery_supp = of_find_node_by_name(NULL, "lge-vzw-battery-supplement");
+	else
+		battery_supp = of_find_node_by_name(NULL, "lge-battery-supplement");
+#else
+	battery_supp = of_find_node_by_name(NULL, "lge-battery-supplement");
+#endif
 	if (!dnode) {
 		pr_idt(IDT_ERROR, "dnode is null\n");
 		return false;
@@ -1357,15 +1462,19 @@ static bool idtp9222_probe_devicetree(struct device_node* dnode,
 	if (!charger_supp
 		|| of_property_read_u32(charger_supp, "qcom,auto-recharge-soc", &buf) < 0) {
 		pr_idt(IDT_ERROR, "auto-recharge-soc is failed\n");
-		idtp9222->configure_recharge = 249;
+		idtp9222->configure_recharge = DEFAULT_AUTO_RECHARGE_SOC;
 	}
 	else
+#ifdef CONFIG_QPNP_QG
+		idtp9222->configure_recharge = buf;
+#else
 		idtp9222->configure_recharge = buf * 255 / 100;
+#endif
 
 	if (!battery_supp
 		|| of_property_read_u32(battery_supp, "capacity-raw-full", &buf) < 0) {
 		pr_idt(IDT_ERROR, "capacity-raw-full is failed\n");
-		idtp9222->configure_rawfull = 247;
+		idtp9222->configure_rawfull = DEFAULT_CAPACITY_RAW_FULL;
 	} else
 		idtp9222->configure_rawfull = buf;
 

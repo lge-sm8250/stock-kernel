@@ -192,7 +192,7 @@ static void VibeOSKernelLinuxStopTimer(void)
 {
     if (g_bTimerStarted)
     {
-        if (VibeSemIsLocked(&g_hSemaphore)) {
+        while (VibeSemIsLocked(&g_hSemaphore)) {
             pr_err("%s, VibeSemIsLocked wake up semaphore\n", __func__);
             up(&g_hSemaphore);
         }

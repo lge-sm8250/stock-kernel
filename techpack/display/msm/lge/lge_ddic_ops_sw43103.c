@@ -5,6 +5,11 @@
 #include "cm/lge_color_manager.h"
 #include "brightness/lge_brightness_def.h"
 #include "lge_dsi_panel.h"
+#include <soc/qcom/lge/board_lge.h>
+#include "../lge/factory/lge_factory.h"
+
+extern bool lge_get_factory_boot(void);
+extern int lge_get_mfts_mode(void);
 
 #define ADDR_PTLAR 0x30
 #define ADDR_PLTAC 0x31
@@ -412,77 +417,157 @@ static void lge_set_fp_lhbm_sw43103(struct dsi_panel *panel, int input)
 {
 	bool fp_aod_ctrl = false;
 
-	mutex_lock(&panel->panel_lock);
-	fp_aod_ctrl = lge_dsi_panel_is_power_on_lp(panel);
-
 	if (panel == NULL) {
-		mutex_unlock(&panel->panel_lock);
 		pr_err("null ptr\n");
 		return;
 	}
+
+	mutex_lock(&panel->panel_lock);
+	fp_aod_ctrl = lge_dsi_panel_is_power_on_lp(panel);
 
 	if((panel->lge.forced_lhbm == false) && (input == panel->lge.old_fp_lhbm_mode)) {
 		mutex_unlock(&panel->panel_lock);
 		pr_info("requested same state=%d\n", panel->lge.old_fp_lhbm_mode);
 		return;
 	}
-	pr_err("lge_set_fp_lhbm_sw43103\n");
 
-	switch (input) {
-	case LGE_FP_LHBM_READY:
-		panel->lge.lhbm_ready_enable = true;
-		lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_READY);	//Enable dimming
-		pr_info("[LHBM READY] set max brightness 0x6A9\n");
-	break;
-	case LGE_FP_LHBM_ON:
-	case LGE_FP_LHBM_SM_ON:
-	case LGE_FP_LHBM_FORCED_ON:
-		if(fp_aod_ctrl) {
-			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_AOD_TO_FPS);
-			pr_info("AOD to Normal mode\n");
-		}
-		pr_info("[LHBM ON] set max brightness 0x6A9\n");
-		lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_ON);
-		if (input == LGE_FP_LHBM_FORCED_ON) {
-			if (panel->lge.old_fp_lhbm_mode == LGE_FP_LHBM_FORCED_ON)
-				panel->lge.forced_lhbm = false;
-			else
-				panel->lge.forced_lhbm = true;
-		}
-	break;
-	case LGE_FP_LHBM_OFF:
-	case LGE_FP_LHBM_SM_OFF:
-	case LGE_FP_LHBM_FORCED_OFF:
-		lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);
-		if(!panel->lge.lhbm_ready_enable) {
-			pr_info("[LHBM OFF] current brightness = %d\n", panel->bl_config.bl_level);
+	if (panel->lge.use_fps_mode1_new) {
+		switch (input) {
+		case LGE_FP_LHBM_READY:
+			panel->lge.lhbm_ready_enable = true;
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_READY);
+			pr_info("[LHBM READY]\n");
+		break;
+		case LGE_FP_LHBM_SM_ON:
+		case LGE_FP_LHBM_FORCED_ON:
+			if (fp_aod_ctrl) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_AOD_TO_FPS);
+				pr_info("AOD to Normal mode\n");
+			}
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_PRE_FP_LHBM_ON);
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_ON);
+			if (input == LGE_FP_LHBM_FORCED_ON) {
+				if (panel->lge.old_fp_lhbm_mode == LGE_FP_LHBM_FORCED_ON)
+					panel->lge.forced_lhbm = false;
+				else
+					panel->lge.forced_lhbm = true;
+			}
+			pr_info("[LHBM LGE_FP_LHBM_SM_ON]\n");
+		break;
+		case LGE_FP_LHBM_ON:
+			if (lge_get_factory_boot() || lge_get_mfts_mode()) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_READY);
+				pr_info("Factory mode need lhbm ready\n");
+			}
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_ON);
+			pr_info("[LHBM ON]\n");
+		break;
+		case LGE_FP_LHBM_SM_OFF:
+		case LGE_FP_LHBM_FORCED_OFF:
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_POST_FP_LHBM_OFF);
+			if (fp_aod_ctrl) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_FPS_TO_AOD);
+				pr_info("Normal to AOD mode\n");
+			}
+			if (!panel->lge.lhbm_ready_enable) {
+				pr_info("[LHBM OFF] current brightness = %d\n", panel->bl_config.bl_level);
+				dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+			}
+			panel->lge.forced_lhbm = false;
+			pr_info("[LHBM LGE_FP_LHBM_SM_OFF]\n");
+		break;
+		case LGE_FP_LHBM_OFF:
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);
+			if (lge_get_factory_boot() || lge_get_mfts_mode()) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_EXIT);
+				pr_info("Factory mode need lhbm exit\n");
+			}
+			if (fp_aod_ctrl) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_FPS_TO_AOD);
+				pr_info("Normal to AOD mode\n");
+			}
+			if (!panel->lge.lhbm_ready_enable) {
+				pr_info("[LHBM OFF] current brightness = %d\n", panel->bl_config.bl_level);
+				dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+			}
+			panel->lge.forced_lhbm = false;
+		break;
+		case LGE_FP_LHBM_EXIT:
+		case LGE_FP_LHBM_FORCED_EXIT:
+			pr_info("[LHBM EXIT] current brightness = %d\n", panel->bl_config.bl_level);
+			panel->lge.lhbm_ready_enable = false;
+			panel->lge.forced_lhbm = false;
 			dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);		//force off to avoid abnormal case
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_EXIT);	//Disable dimming
+			if (lge_dsi_panel_is_power_on_interactive(panel)) {
+				mutex_unlock(&panel->panel_lock);
+				lge_set_screen_mode_sw43103(panel,true);
+				mutex_lock(&panel->panel_lock);
+			}
+		break;
+		default:
+			pr_info("Not ready for another lhbm mode = %d\n", input);
+		break;
 		}
-		if(fp_aod_ctrl) {
-			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_FPS_TO_AOD);
-			pr_info("Normal to AOD mode\n");
-		}
-		panel->lge.forced_lhbm = false;
-	break;
-	case LGE_FP_LHBM_EXIT:
-	case LGE_FP_LHBM_FORCED_EXIT:
-		pr_info("[LHBM EXIT] current brightness = %d\n", panel->bl_config.bl_level);
-		panel->lge.lhbm_ready_enable = false;
-		panel->lge.forced_lhbm = false;
-		dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+	} else {
+		switch (input) {
+		case LGE_FP_LHBM_READY:
+			panel->lge.lhbm_ready_enable = true;
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_READY);	//Enable dimming
+			pr_info("[LHBM READY] set max brightness 0x6A9\n");
+		break;
+		case LGE_FP_LHBM_ON:
+		case LGE_FP_LHBM_SM_ON:
+		case LGE_FP_LHBM_FORCED_ON:
+			if (fp_aod_ctrl) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_AOD_TO_FPS);
+				pr_info("AOD to Normal mode\n");
+			}
+			pr_info("[LHBM ON] set max brightness 0x6A9\n");
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_ON);
+			if (input == LGE_FP_LHBM_FORCED_ON) {
+				if (panel->lge.old_fp_lhbm_mode == LGE_FP_LHBM_FORCED_ON)
+					panel->lge.forced_lhbm = false;
+				else
+					panel->lge.forced_lhbm = true;
+			}
+		break;
+		case LGE_FP_LHBM_OFF:
+		case LGE_FP_LHBM_SM_OFF:
+		case LGE_FP_LHBM_FORCED_OFF:
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);
+			if (fp_aod_ctrl) {
+				lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_FPS_TO_AOD);
+				pr_info("Normal to AOD mode\n");
+			}
+			if (!panel->lge.lhbm_ready_enable) {
+				pr_info("[LHBM OFF] current brightness = %d\n", panel->bl_config.bl_level);
+				dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+			}
+			panel->lge.forced_lhbm = false;
+		break;
+		case LGE_FP_LHBM_EXIT:
+		case LGE_FP_LHBM_FORCED_EXIT:
+			pr_info("[LHBM EXIT] current brightness = %d\n", panel->bl_config.bl_level);
+			panel->lge.lhbm_ready_enable = false;
+			panel->lge.forced_lhbm = false;
+			dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
 
-		lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);		//force off to avoid abnormal case
-		lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_EXIT);	//Disable dimming
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_OFF);		//force off to avoid abnormal case
+			lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_FP_LHBM_EXIT);	//Disable dimming
 
-		if (lge_dsi_panel_is_power_on_interactive(panel)) {
-			mutex_unlock(&panel->panel_lock);
-			lge_set_screen_mode_sw43103(panel,true);
-			mutex_lock(&panel->panel_lock);
+			if (lge_dsi_panel_is_power_on_interactive(panel)) {
+				mutex_unlock(&panel->panel_lock);
+				lge_set_screen_mode_sw43103(panel,true);
+				mutex_lock(&panel->panel_lock);
+			}
+		break;
+		default:
+			pr_info("Not ready for another lhbm mode = %d\n", input);
+		break;
 		}
-	break;
-	default:
-		pr_info("Not ready for another lhbm mode = %d\n", input);
-	break;
 	}
 
 	panel->lge.old_fp_lhbm_mode = input;
@@ -502,6 +587,13 @@ static void lge_set_video_enhancement_sw43103(struct dsi_panel *panel, int input
 {
 	int rc = 0;
 	bool enable = false;
+	struct backlight_device *bd;
+
+	if (!panel->bl_config.raw_bd) {
+		pr_err("backlight device is NULL\n");
+		return;
+	}
+	bd = panel->bl_config.raw_bd;
 
 	mutex_lock(&panel->panel_lock);
 
@@ -527,8 +619,30 @@ static void lge_set_video_enhancement_sw43103(struct dsi_panel *panel, int input
 	pr_info("send cmds to %s the video enhancer \n",
 		(input == true) ? "enable" : "disable");
 
+	mutex_lock(&bd->ops_lock);
 	lge_backlight_device_update_status(panel->bl_config.raw_bd);
+	mutex_unlock(&bd->ops_lock);
 }
+
+static void lge_set_ecc_status_sw43103(struct dsi_panel *panel, int input)
+{
+	int rc = 0;
+
+	mutex_lock(&panel->panel_lock);
+	if (input) {
+		rc = lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_ECC_STATUS_ON);
+		if (rc)
+			pr_err("failed to send ECC_STATUS_ON cmd, rc=%d\n", rc);
+	} else {
+		rc = lge_ddic_dsi_panel_tx_cmd_set(panel, LGE_DDIC_DSI_ECC_STATUS_OFF);
+		if (rc)
+			pr_err("failed to send ECC_STATUS_OFF cmd, rc=%d\n", rc);
+	}
+	mutex_unlock(&panel->panel_lock);
+
+	pr_info("send ecc %s cmd\n", input? "enable" : "disable");
+}
+
 static void lge_update_irc_state(struct dsi_panel *panel, int value)
 {
 	panel->lge.irc_current_state = value;
@@ -540,16 +654,18 @@ static void lge_update_irc_state(struct dsi_panel *panel, int value)
 int lge_set_irc_state_sw43103(struct dsi_panel *panel, enum lge_irc_mode mode, enum lge_irc_ctrl enable)
 {
 	char *payload = NULL;
-	int prev_state = !!panel->lge.irc_current_state;
+	int prev_state;
 	int new_state;
 
 	if (!panel) {
 		pr_err("panel not exist\n");
 		return -EINVAL;
 	}
+
 	pr_info("irc request=%s\n", ((enable == LGE_IRC_OFF) ? "off" : "on"));
 
 	mutex_lock(&panel->panel_lock);
+	prev_state = !!panel->lge.irc_current_state;
 	lge_update_irc_state(panel, enable);
 	new_state = !!panel->lge.irc_current_state;
 
@@ -620,6 +736,14 @@ int lge_set_irc_default_state_sw43103(struct dsi_panel *panel)
 
 static int lge_daylight_mode_set_sw43103(struct dsi_panel *panel, int input)
 {
+	struct backlight_device *bd;
+
+	if (!panel->bl_config.raw_bd) {
+		pr_err("backlight device is NULL\n");
+		return -EINVAL;
+	}
+	bd = panel->bl_config.raw_bd;
+
 	mutex_lock(&panel->panel_lock);
 	pr_info("daylight_mode = %d\n", input);
 
@@ -637,7 +761,9 @@ static int lge_daylight_mode_set_sw43103(struct dsi_panel *panel, int input)
 			lge_set_irc_state_sw43103(panel, LGE_GLOBAL_IRC_HDR, LGE_IRC_ON);
 	}
 
+	mutex_lock(&bd->ops_lock);
 	lge_backlight_device_update_status(panel->bl_config.raw_bd);
+	mutex_unlock(&bd->ops_lock);
 
 	return 0;
 }
@@ -645,6 +771,13 @@ static int lge_daylight_mode_set_sw43103(struct dsi_panel *panel, int input)
 static int lge_hdr_mode_set_sw43103(struct dsi_panel *panel, int input)
 {
 	bool hdr_mode = ((input > 0) ? true : false);
+	struct backlight_device *bd;
+
+	if (!panel->bl_config.raw_bd) {
+		pr_err("backlight device is NULL\n");
+		return -EINVAL;
+	}
+	bd = panel->bl_config.raw_bd;
 
 	mutex_lock(&panel->panel_lock);
 	if (hdr_mode) {
@@ -672,7 +805,9 @@ static int lge_hdr_mode_set_sw43103(struct dsi_panel *panel, int input)
 		lge_set_screen_mode_sw43103(panel, true);
 	}
 
+	mutex_lock(&bd->ops_lock);
 	lge_backlight_device_update_status(panel->bl_config.raw_bd);
+	mutex_unlock(&bd->ops_lock);
 
 	return 0;
 }
@@ -734,6 +869,7 @@ struct lge_ddic_ops sw43103_ops = {
 	.sharpness_set = NULL,
 	.lge_set_true_view_mode = NULL,
 	.lge_set_video_enhancement = lge_set_video_enhancement_sw43103,
+	.lge_set_ecc_status = lge_set_ecc_status_sw43103,
 	.lge_vr_lp_mode_set = lge_vr_lp_mode_set_sw43103,
 	.lge_set_tc_perf = lge_set_tc_perf_sw43103,
 	/* drs */

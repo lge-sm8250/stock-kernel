@@ -29,43 +29,38 @@
 #if DIRECTIONAL_GPIO
 
 /* Total Number of GPIO's */
-//#define SDM845_MAX_GPIO 150
-//#define SM8150_MAX_GPIO 175
-#define SM8250_MAX_GPIO 180
+#define SM7250_MAX_GPIO 146
 
 enum gpio_dir {
-	WST,
 	STH,
-	NTH,
+	WST,
+	EST,
 };
-//sm8250 : referred from kona_groups[] in drivers/pinctrl/qcom/pinctrl-kona.c
-static const enum gpio_dir gpio_dir_map[SM8250_MAX_GPIO] = {
+//sm8250 : referred from kona_groups[] in drivers/pinctrl/qcom/pinctrl-lito.c
+static const enum gpio_dir gpio_dir_map[SM7250_MAX_GPIO] = {
 /*	 0    1    2    3    4    5    6    7    8    9            */
-	STH, STH, STH, STH, NTH, NTH, NTH, NTH, NTH, NTH, /* [000] */
-	NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, /* [010] */
-	NTH, NTH, NTH, NTH, STH, STH, STH, STH, NTH, NTH, /* [020] */
-	NTH, NTH, STH, STH, STH, STH, STH, STH, STH, STH, /* [030] */
-	STH, STH, STH, STH, STH, STH, STH, STH, STH, STH, /* [040] */
-	STH, STH, STH, STH, STH, STH, STH, STH, STH, STH, /* [050] */
-	STH, STH, STH, STH, STH, STH, NTH, NTH, NTH, STH, /* [060] */
-	STH, STH, STH, STH, STH, STH, STH, NTH, NTH, NTH, /* [070] */
-	NTH, NTH, NTH, NTH, NTH, STH, STH, STH, STH, STH, /* [080] */
-	STH, STH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, /* [090] */
-	NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, /* [100] */
-	NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, NTH, /* [110] */
-	NTH, NTH, NTH, NTH, NTH, STH, STH, STH, STH, STH, /* [120] */
-	STH, STH, STH, WST, WST, WST, WST, WST, WST, WST, /* [130] */
-	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [140] */
-	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [150] */
-	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [160] */
-	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [170] */
+	EST, EST, EST, EST, EST, EST, WST, WST, WST, WST, /* [000] */
+	WST, EST, EST, EST, EST, EST, EST, EST, EST, EST, /* [010] */
+	EST, EST, EST, EST, EST, EST, EST, EST, EST, EST, /* [020] */
+	EST, EST, EST, WST, EST, EST, EST, EST, EST, EST, /* [030] */
+	EST, EST, EST, EST, EST, EST, WST, WST, WST, WST, /* [040] */
+	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [050] */
+	WST, WST, WST, WST, EST, EST, EST, EST, EST, EST, /* [060] */
+	WST, WST, WST, EST, WST, STH, STH, STH, STH, STH, /* [070] */
+	STH, STH, STH, WST, STH, STH, STH, EST, EST, EST, /* [080] */
+	STH, STH, STH, STH, STH, STH, STH, STH, STH, STH, /* [090] */
+	STH, STH, STH, STH, EST, EST, STH, EST, WST, WST, /* [100] */
+	EST, EST, WST, WST, WST, WST, WST, WST, WST, WST, /* [110] */
+	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [120] */
+	WST, WST, WST, WST, WST, WST, WST, WST, WST, WST, /* [130] */
+	WST, WST, WST, WST, WST, WST,                     /* [140] */
 };
 
-/* SM8250 TLMM base from 0x0F100000 */
+/* SM7250 TLMM base from 0x0F100000 */
 static const char gpio_base_offset[] = {
-	0, /* TLMM_WEST,  idx 0 of gpio_dir  */
-	4, /* TLMM_SOUTH, idx 1 of gpio dir */
-	8, /* TLMM_NORTH, idx 2 of gpio_dir  */
+	0, /* TLMM_SOUTH,  idx 0 of gpio_dir  */
+	4, /* TLMM_WEST, idx 1 of gpio dir */
+	8, /* TLMM_EAST, idx 2 of gpio_dir */
 };
 
 #define GPIO_CONFIG(tlmm, gpio)        ( (tlmm->base  \
@@ -326,6 +321,11 @@ static int gpio_address_set(void *data, u64 val)
 			spin_unlock_irqrestore(&gpios_lock, flags);
 			return 0;
 		}
+		if (!msm_gpio_check_access(gpio)) {
+			printk("HLOS can't access this GPIO, %d\n", gpio);
+			spin_unlock_irqrestore(&gpios_lock, flags);
+			return 0;
+		}
 		gpio_user_sel = gpio;
 		pr_err("Set MSM GPIO : %d\n", gpio_user_sel);
 	} else {
@@ -407,6 +407,19 @@ DEFINE_SIMPLE_ATTRIBUTE(gpio_data_fops, gpio_data_get,
 		gpio_data_set, "0x%llx\n");
 DEFINE_SIMPLE_ATTRIBUTE(gpio_all_fops, gpio_all_get,
 		NULL, "0x%llx\n");
+
+void gpio_debug_print_enabled(void)
+{
+	unsigned long flags;
+
+	if(likely(!debug_suspend))
+		return;
+
+	spin_lock_irqsave(&gpios_lock, flags);
+	gpio_debug_print();
+	spin_unlock_irqrestore(&gpios_lock, flags);
+}
+EXPORT_SYMBOL(gpio_debug_print_enabled);
 
 static int gpio_debug_probe(struct platform_device *pdev)
 {

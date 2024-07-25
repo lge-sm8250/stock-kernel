@@ -152,7 +152,7 @@ config QTI_LIMITS_ISENSE_CDSP
           driver is required for the chipsets where isense hardware is present
           as part of cdsp subsystem.
 
-config LGE_VIRTUAL_SENSOR
+config LGE_PM_VIRTUAL_SENSOR
 	bool "LGE Virtual Sensor driver"
 	depends on THERMAL_OF
 	help

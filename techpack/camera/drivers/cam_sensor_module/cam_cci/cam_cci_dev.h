@@ -37,7 +37,9 @@
 #define CYCLES_PER_MICRO_SEC_DEFAULT 4915
 #define CCI_MAX_DELAY 1000000
 
-#define CCI_TIMEOUT msecs_to_jiffies(1500)
+/* LGE_CHANGE_S, [Stability] change timeout 1500 to 300ms because add cci retrial  2020-09-03, CST, camera-stability@lge.com */
+//#define CCI_TIMEOUT msecs_to_jiffies(1500)
+#define CCI_TIMEOUT msecs_to_jiffies(300)
 
 #define NUM_QUEUES 2
 

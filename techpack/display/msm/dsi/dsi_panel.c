@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
@@ -12,6 +11,7 @@
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/pwm.h>
+
 #include <video/mipi_display.h>
 
 #include "dsi_panel.h"
@@ -24,7 +24,9 @@
 #include <soc/qcom/lge/board_lge.h>
 #include "../lge/factory/lge_factory.h"
 #include "../lge/brightness/lge_brightness_def.h"
+#include <linux/lge_panel_notify.h>
 
+extern bool lge_get_factory_boot(void);
 extern int lge_get_mfts_mode(void);
 #endif
 
@@ -57,12 +59,13 @@ enum dsi_dsc_ratio_type {
 static u32 dsi_dsc_rc_buf_thresh[] = {0x0e, 0x1c, 0x2a, 0x38, 0x46, 0x54,
 		0x62, 0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e};
 
+
 /*
  * DSC 1.1
  * Rate control - Min QP values for each ratio type in dsi_dsc_ratio_type
  */
 static char dsi_dsc_rc_range_min_qp_1_1[][15] = {
-	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 13},
+	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 12},
 	{0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 17},
 	{0, 4, 9, 9, 11, 11, 11, 11, 11, 11, 13, 13, 13, 15, 21},
 	{0, 4, 5, 6, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 15},
@@ -467,6 +470,25 @@ static int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable)
 	return rc;
 }
 
+#define PANEL_NAME_LENGTH 15
+char lge_panel_name[PANEL_NAME_LENGTH+1];
+bool panel_type_touch(char *panel_name){
+
+	if (panel_name == NULL) {
+		pr_err("input parameter is NULL\n");
+		return false;
+	}
+
+	DSI_ERR("[LGE] lge_panel_name= %s\n", lge_panel_name);
+
+	if(!strcmp(lge_panel_name, panel_name)) {
+		return true;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(panel_type_touch);
+
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
 __weak int dsi_panel_power_on(struct dsi_panel *panel)
 #else
@@ -474,7 +496,7 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 #endif
 {
 	int rc = 0;
-	pr_err("[Display] dsi_panel_power_on +\n");
+
 	rc = dsi_pwr_enable_regulator(&panel->power_info, true);
 	if (rc) {
 		DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
@@ -509,7 +531,6 @@ error_disable_vregs:
 	(void)dsi_pwr_enable_regulator(&panel->power_info, false);
 
 exit:
-	pr_err("[Display] dsi_panel_power_on -\n");
 	return rc;
 }
 
@@ -791,7 +812,7 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		case LGE_FP_LHBM_OFF:
 		case LGE_FP_LHBM_SM_OFF:
 		case LGE_FP_LHBM_FORCED_OFF:
-			if(panel->lge.lhbm_ready_enable){
+			if (panel->lge.lhbm_ready_enable){
 				pr_info("Skip backlight setting (LHBM READY and OFF)\n");
 				return 0;
 			}
@@ -2335,7 +2356,6 @@ static int dsi_panel_parse_gpios(struct dsi_panel *panel)
 		DSI_ERR("[%s] failed get reset gpio, rc=%d\n", panel->name, rc);
 		goto error;
 	}
-
 	panel->reset_config.disp_en_gpio = utils->get_named_gpio(utils->data,
 						"qcom,5v-boost-gpio",
 						0);
@@ -3488,6 +3508,11 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 				"qcom,mdss-dsi-panel-physical-type", NULL);
 	if (panel_physical_type && !strcmp(panel_physical_type, "oled"))
 		panel->panel_type = DSI_DISPLAY_PANEL_TYPE_OLED;
+
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_COMMON)
+	snprintf(lge_panel_name, PANEL_NAME_LENGTH, "%s", panel_physical_type);
+#endif
+
 	rc = dsi_panel_parse_host_config(panel);
 	if (rc) {
 		DSI_ERR("failed to parse host configuration, rc=%d\n",
@@ -3716,7 +3741,9 @@ int dsi_panel_validate_mode(struct dsi_panel *panel,
 
 int dsi_panel_get_mode_count(struct dsi_panel *panel)
 {
+#if !defined(CONFIG_LGE_DISPLAY_MULTI_MODE_FOR_VIDEO_MODE)
 	const u32 SINGLE_MODE_SUPPORT = 1;
+#endif
 	struct dsi_parser_utils *utils;
 	struct device_node *timings_np, *child_np;
 	int num_dfps_rates, num_bit_clks;
@@ -3748,6 +3775,7 @@ int dsi_panel_get_mode_count(struct dsi_panel *panel)
 		goto error;
 	}
 
+#if !defined(CONFIG_LGE_DISPLAY_MULTI_MODE_FOR_VIDEO_MODE)
 	/* No multiresolution support is available for video mode panels.
 	 * Multi-mode is supported for video mode during POMS is enabled.
 	 */
@@ -3755,6 +3783,7 @@ int dsi_panel_get_mode_count(struct dsi_panel *panel)
 		!panel->host_config.ext_bridge_mode &&
 		!panel->panel_mode_switch_enabled)
 		count = SINGLE_MODE_SUPPORT;
+#endif
 
 	panel->num_timing_nodes = count;
 	dsi_for_each_child_node(timings_np, child_np) {
@@ -3911,6 +3940,8 @@ void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 		 * plus 100usec buffer time.
 		 */
 		min_threshold_us = min_threshold_us + 100 + prefill_time_us;
+
+		DSI_DEBUG("min threshold time=%d\n", min_threshold_us);
 
 		if (min_threshold_us > frame_threshold_us)
 			frame_threshold_us = min_threshold_us;
@@ -4252,6 +4283,7 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_NOLP cmd, rc=%d\n",
 		       panel->name, rc);
+
 exit:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -4576,12 +4608,12 @@ int dsi_panel_post_switch(struct dsi_panel *panel)
 int dsi_panel_enable(struct dsi_panel *panel)
 {
 	int rc = 0;
-	pr_err("[Display] dsi_panel_enable +\n");
 	if (!panel) {
 		DSI_ERR("Invalid params\n");
 		return -EINVAL;
 	}
 
+	pr_err("[%s] ++\n", panel->name);
 	mutex_lock(&panel->panel_lock);
 
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
@@ -4591,7 +4623,7 @@ int dsi_panel_enable(struct dsi_panel *panel)
 	else
 		panel->panel_initialized = true;
 	mutex_unlock(&panel->panel_lock);
-	pr_err("[Display] dsi_panel_enable -\n");
+	pr_err("[%s] --\n", panel->name);
 	return rc;
 }
 
@@ -4647,12 +4679,12 @@ int dsi_panel_disable(struct dsi_panel *panel)
 {
 	int rc = 0;
 
-	pr_err("[Display] dsi_panel_disable +\n");
 	if (!panel) {
 		DSI_ERR("invalid params\n");
 		return -EINVAL;
 	}
 
+	pr_err("[%s] ++\n", panel->name);
 	mutex_lock(&panel->panel_lock);
 
 	/* Avoid sending panel off commands when ESD recovery is underway */
@@ -4683,7 +4715,7 @@ int dsi_panel_disable(struct dsi_panel *panel)
 	panel->power_mode = SDE_MODE_DPMS_OFF;
 
 	mutex_unlock(&panel->panel_lock);
-	pr_err("[Display] dsi_panel_disable -\n");
+	pr_err("[%s] --\n", panel->name);
 	return rc;
 }
 

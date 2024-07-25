@@ -275,11 +275,9 @@ static int mmc_read_ssr(struct mmc_card *card)
 				card->ssr.erase_timeout = (et * 1000) / es;
 				card->ssr.erase_offset = eo * 1000;
 			}
-			#ifdef CONFIG_LFS_MMC
-			/* LGE_CHANGE
-			 * Get SPEED_CLASS of SD-card.
+#ifdef CONFIG_LFS_MMC
+			 /* Get SPEED_CLASS of SD-card.
 			 * 0:Class0, 1:Class2, 2:Class4, 3:Class6, 4:Class10
-			 * 2014/07/01, B2-BSP-FS@lge.com
 			 */
 			{
 			   unsigned int speed_class_ssr = 0;
@@ -297,7 +295,7 @@ static int mmc_read_ssr(struct mmc_card *card)
 			   else
 			   printk(KERN_INFO "[LGE][MMC][%-18s( )] mmc_hostname:%s, Unknown SPEED_CLASS\n", __func__, mmc_hostname(card->host));
 			}
-			#endif
+#endif
 		} else {
 			pr_warn("%s: SD Status: Invalid Allocation Unit size\n",
 				mmc_hostname(card->host));
@@ -800,16 +798,6 @@ MMC_DEV_ATTR(serial, "0x%08x\n", card->cid.serial);
 MMC_DEV_ATTR(ocr, "0x%08x\n", card->ocr);
 MMC_DEV_ATTR(rca, "0x%04x\n", card->rca);
 
-#ifdef CONFIG_LFS_MMC
-MMC_DEV_ATTR(err_cmd_timeout, "%d\n", card->host->err_stats[MMC_ERR_CMD_TIMEOUT]);
-MMC_DEV_ATTR(err_cmd_crc, "%d\n", card->host->err_stats[MMC_ERR_CMD_CRC]);
-MMC_DEV_ATTR(err_dat_timeout, "%d\n", card->host->err_stats[MMC_ERR_DAT_TIMEOUT]);
-MMC_DEV_ATTR(err_dat_crc, "%d\n", card->host->err_stats[MMC_ERR_DAT_CRC]);
-MMC_DEV_ATTR(err_auto_cmd, "%d\n", card->host->err_stats[MMC_ERR_AUTO_CMD]);
-MMC_DEV_ATTR(err_adma, "%d\n", card->host->err_stats[MMC_ERR_ADMA]);
-MMC_DEV_ATTR(err_req_timeout, "%d\n", card->host->err_stats[MMC_ERR_REQ_TIMEOUT]);
-MMC_DEV_ATTR(err_ice_config, "%d\n", card->host->err_stats[MMC_ERR_ICE_CFG]);
-#endif
 
 static ssize_t mmc_dsr_show(struct device *dev,
                            struct device_attribute *attr,
@@ -844,16 +832,6 @@ static struct attribute *sd_std_attrs[] = {
 	&dev_attr_ocr.attr,
 	&dev_attr_rca.attr,
 	&dev_attr_dsr.attr,
-#ifdef CONFIG_LFS_MMC
-	&dev_attr_err_cmd_timeout.attr,
-	&dev_attr_err_cmd_crc.attr,
-	&dev_attr_err_dat_timeout.attr,
-	&dev_attr_err_dat_crc.attr,
-	&dev_attr_err_auto_cmd.attr,
-	&dev_attr_err_adma.attr,
-	&dev_attr_err_req_timeout.attr,
-	&dev_attr_err_ice_config.attr,
-#endif
 	NULL,
 };
 ATTRIBUTE_GROUPS(sd_std);
@@ -1083,8 +1061,8 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 	bool v18_fixup_failed = false;
 
 	WARN_ON(!host->claimed);
-	
-	#ifdef CONFIG_LFS_MMC
+
+#ifdef CONFIG_LFS_MMC
 	/* LGE_CHANGE
 	 * When uSD is not inserted, return proper error-value.
 	 */
@@ -1093,7 +1071,7 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 		err = -ENOMEDIUM;
 		return err;
 	}
-	#endif
+#endif
 retry:
 	err = mmc_sd_get_cid(host, ocr, cid, &rocr);
 	if (err)
@@ -1536,28 +1514,10 @@ int mmc_attach_sd(struct mmc_host *host)
 {
 	int err;
 	u32 ocr, rocr;
-#ifdef CONFIG_LFS_MMC
-	int i = 0;
-#endif
 
 	WARN_ON(!host->claimed);
 
-#ifdef CONFIG_LFS_MMC
-	for(i = 0; i < 3; i++) {
-		err = mmc_send_app_op_cond(host, 0, &ocr);
-		printk(KERN_ERR "[LGE][%s]mmc_send_app_op_cond : %d\n", __func__, err);
-		if (err) {
-			mmc_power_cycle(host, host->ocr_avail);
-			mmc_go_idle(host);
-			mmc_send_if_cond(host, host->ocr_avail);
-			printk(KERN_ERR "[LGE][%s]after mmc_power_cycle %d\n", __func__, i);
-		} else {
-			break;
-		}
-	}
-#else
 	err = mmc_send_app_op_cond(host, 0, &ocr);
-#endif
 	if (err)
 		return err;
 

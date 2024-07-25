@@ -12,11 +12,20 @@
 #include <linux/module.h>
 #include <linux/thermal.h>
 #include <linux/platform_device.h>
+#if defined(CONFIG_MACH_LITO_CAYMANLM_LAO_COM) || defined(CONFIG_MACH_LITO_ACELM)
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
 #include "veneer-primitives.h"
 
 #define VOTER_NAME_THERMALD	"THERMALD"
 #define VOTER_NAME_HIDDENM	"HIDDENM"
+#ifdef CONFIG_LGE_PM_CCD
+#define VOTER_NAME_CCD		"CCD"
+#define VOTER_NAME_CCD_INPUT		"CCD_INPUT"
+#define VOTER_NAME_CCD_WLC			"CCD_WLC"
+#define VOTER_NAME_CCD_BATCHG		"CCD_BATCHG"
+#endif
 #define RESTRICTION_MAX_COUNT	8
 #define RESTRICTION_MAX_NAME	32
 
@@ -30,7 +39,19 @@ struct unified_nodes {
 	struct voter_entry		charging_restriction [RESTRICTION_MAX_COUNT];
 	struct voter_entry		charging_enable [2]; // 0 for iusb, 1 for idc
 	const char*			charging_step;
+#ifdef CONFIG_LGE_PM_CCD
+	int						time_to_full_now;
+	int						ttf_capacity;
+	int						aicl_done;
+	struct voter_entry		ccd_icl;
+	struct voter_entry		ccd_fcc;
+	struct voter_entry		ccd_vfloat;
+	struct voter_entry		ccd_input_suspend;
+	struct voter_entry		ccd_wlc_suspend;
+	struct voter_entry		ccd_batchg_en;
+#else
 	bool				charging_showcase;
+#endif
 	void*				charging_completed;
 	int				status_boot;
 	bool				status_lcd;
@@ -41,6 +62,8 @@ struct unified_nodes {
 	void*				battery_condition;
 	void*				battery_cycle;
 	bool				battery_valid;
+	bool				battery_condition_tc_mode;
+	int				battery_condition_tc_value;
 	char				charger_name [64];
 	bool				charger_highspeed;
 	bool*				charger_incompatible;
@@ -51,6 +74,9 @@ struct unified_nodes {
 	bool				support_fastchg;
 	const char* fake_psy;
 	const char* battage_psy;
+#ifdef CONFIG_LGE_PM_CCD
+	const char* ttf_psy;
+#endif
 	int				fake_temperature;
 	int				fake_mvoltage;
 	int				fake_capacity;
@@ -74,9 +100,35 @@ struct unified_nodes {
 	} actm;
 	int irc_enabled;
 	int irc_resistance;
-
-	int pps_ta_count;
 };
+
+#ifdef CONFIG_MACH_LITO_ACELM
+static bool lge_disable_smb1390(void)
+{
+	if ((lge_get_sku_carrier() == HW_SKU_KR) &&
+		(lge_get_board_rev_no() > HW_REV_C ) ){
+		return true;
+	}
+
+	if ((lge_get_sku_carrier() == HW_SKU_GLOBAL     ||
+		 lge_get_sku_carrier() == HW_SKU_GLOBAL_MEA ||
+		 lge_get_sku_carrier() == HW_SKU_AU_OPEN    ||
+		 lge_get_sku_carrier() == HW_SKU_AU_TEL     ||
+		 lge_get_sku_carrier() == HW_SKU_GLOBAL_CERT) &&
+		(lge_get_board_rev_no() < HW_REV_1_0) ){
+		return true;
+	}
+
+	if (lge_get_laop_operator() == OP_OPEN_KR ||
+		lge_get_laop_operator() == OP_SKT_KR  ||
+		lge_get_laop_operator() == OP_KT_KR   ||
+		lge_get_laop_operator() == OP_LGU_KR  ){
+		return true;
+	}
+
+	return false;
+}
+#endif
 
 static void voter_unregister(struct unified_nodes* uninodes) {
 	int i;
@@ -95,6 +147,15 @@ static void voter_unregister(struct unified_nodes* uninodes) {
 	// For Hiddenm
 	veneer_voter_unregister(&uninodes->charging_enable[0]); // 0 for iusb,
 	veneer_voter_unregister(&uninodes->charging_enable[1]); // 1 for idc,
+#ifdef CONFIG_LGE_PM_CCD
+	//For CCD
+	veneer_voter_unregister(&uninodes->ccd_icl);
+	veneer_voter_unregister(&uninodes->ccd_fcc);
+	veneer_voter_unregister(&uninodes->ccd_vfloat);
+	veneer_voter_unregister(&uninodes->ccd_input_suspend);
+	veneer_voter_unregister(&uninodes->ccd_wlc_suspend);
+	veneer_voter_unregister(&uninodes->ccd_batchg_en);
+#endif
 }
 
 static bool voter_register(struct unified_nodes* uninodes) {
@@ -141,6 +202,20 @@ static bool voter_register(struct unified_nodes* uninodes) {
 		pr_uninode("failed to register voters\n");
 	}
 
+#ifdef CONFIG_LGE_PM_CCD
+// For CCD
+	ret |= veneer_voter_register(&uninodes->ccd_icl, VOTER_NAME_CCD, VOTER_TYPE_IUSB, false);
+	ret |= veneer_voter_register(&uninodes->ccd_fcc, VOTER_NAME_CCD, VOTER_TYPE_IBAT, false);
+	ret |= veneer_voter_register(&uninodes->ccd_vfloat, VOTER_NAME_CCD, VOTER_TYPE_VFLOAT, false);
+	ret |= veneer_voter_register(&uninodes->ccd_input_suspend, VOTER_NAME_CCD_INPUT, VOTER_TYPE_IUSB, false);
+	ret |= veneer_voter_register(&uninodes->ccd_wlc_suspend, VOTER_NAME_CCD_WLC, VOTER_TYPE_IDC, false);
+	ret |= veneer_voter_register(&uninodes->ccd_batchg_en, VOTER_NAME_CCD_BATCHG, VOTER_TYPE_IBAT, false);
+
+	if (!ret) {
+		pr_uninode("failed to register ccd voters\n");
+	}
+#endif
+
 	return ret;
 }
 
@@ -175,7 +250,14 @@ static bool unified_nodes_actm_dt(
 	int actm_array_size = 0;
 	int actm_array[3] = {0, };
 
+#ifdef CONFIG_MACH_LITO_CAYMANLM_LAO_COM
+	if(HW_SKU_NA_CDMA_VZW == lge_get_sku_carrier())
+		devnode_actm = of_find_node_by_name(dnode, "vzw-adaptive-charging-thermal");
+	else
+		devnode_actm = of_find_node_by_name(dnode, "adaptive-charging-thermal");
+#else
 	devnode_actm = of_find_node_by_name(dnode, "adaptive-charging-thermal");
+#endif
 	devnode_bvp = of_find_node_by_name(dnode, "protection-batvolt");
 
 	uninodes->irc_enabled = of_property_read_bool(devnode_bvp, "lge,irc-enable");
@@ -351,6 +433,9 @@ static bool unified_nodes_actm_dt(
 		uninodes->actm.tempoffs_wireless[0] = 0;
 		uninodes->actm.tempoffs_wireless[1] = 0;
 		uninodes->actm.tempoffs_wireless[2] = 0;
+		uninodes->actm.wired_max_fcc[0] = 0;
+		uninodes->actm.wired_max_fcc[1] = 0;
+		uninodes->actm.wired_max_fcc[2] = 0;
 		uninodes->actm.current_wired[0] = 0;
 		uninodes->actm.current_wired[1] = 0;
 		uninodes->actm.current_wired[2] = 0;
@@ -371,6 +456,9 @@ static bool unified_nodes_devicetree(struct device_node* devnode, struct unified
 {
 	struct device_node* devnode_fakebatt = NULL;
 	struct device_node* devnode_battage = NULL;
+#ifdef CONFIG_LGE_PM_CCD
+	struct device_node* devnode_ttf  = NULL;
+#endif
 	struct device_node* devnode_thermal = NULL;
 
 	const char* xo_therm_name = NULL;
@@ -379,15 +467,21 @@ static bool unified_nodes_devicetree(struct device_node* devnode, struct unified
 	int ret = 0;
 
 	bool result = true;
-
+#ifdef CONFIG_MACH_LITO_ACELM
+	uninodes->support_fastpl = lge_disable_smb1390() ? -1 : 0;
+#else
 	uninodes->support_fastpl = (!of_property_read_u32(devnode, "lge,feature-charging-parallel", &buf)
 		&& buf == 1) ? 0 : -1; /* if parallel charging is not supported, set it to '-1' */
+#endif
 	uninodes->support_fastchg = !of_property_read_u32(devnode, "lge,feature-charging-highspeed", &buf)
 		? !!buf : 0;
 
 	uninodes->devnode_restrictchg = of_find_node_by_name(devnode, "lge,restrict-charging");
 	devnode_fakebatt = of_find_node_by_name(devnode, "lge,fake-battery");
 	devnode_battage = of_find_node_by_name(devnode, "lge,battery-age");
+#ifdef CONFIG_LGE_PM_CCD
+	devnode_ttf = of_find_node_by_name(devnode, "lge,ttf");
+#endif
 	devnode_thermal = of_find_node_by_name(devnode, "lge,thermal-zone");
 
 	ret = of_property_read_string(devnode_fakebatt, "fakebatt-psy", &uninodes->fake_psy);
@@ -420,31 +514,44 @@ static bool unified_nodes_devicetree(struct device_node* devnode, struct unified
 		result = false;
 	}
 
+#ifdef CONFIG_LGE_PM_CCD
+	ret = of_property_read_string(devnode_ttf, "ttf-psy", &uninodes->ttf_psy);
+	if (ret != 0) {
+		pr_uninode("Failed to read 'ttf-psy'(%d)\n", ret);
+		//result = false;
+	}
+#endif
+
 	ret = of_property_read_string(devnode_thermal, "xo-therm", &xo_therm_name);
 	if (ret != 0) {
 		pr_uninode("Failed to read 'xo-therm'(%d)\n", ret);
-		result = false;
+		//result = false;
 	}
 
 	ret = of_property_read_string(devnode_thermal, "bd-therm", &bd_therm_name);
 	if (ret != 0) {
 		pr_uninode("Failed to read 'bd-therm'(%d)\n", ret);
-		result = false;
+		//result = false;
 	}
 
 	uninodes->xo_tz= thermal_zone_get_zone_by_name(xo_therm_name);
 	if (IS_ERR(uninodes->xo_tz)) {
 		pr_uninode("Failed to read 'xo_tz' (%d)\n", PTR_ERR(uninodes->xo_tz));
 		uninodes->xo_tz = NULL;
-		result = false;
+		//Temporary After thermal DTS complete modify
+		//result = false;
 	}
 
 	uninodes->bd_tz= thermal_zone_get_zone_by_name(bd_therm_name);
 	if (IS_ERR(uninodes->bd_tz)) {
 		pr_uninode("Failed to read 'bd_tz' (%d)\n", PTR_ERR(uninodes->bd_tz));
 		uninodes->bd_tz = NULL;
-		result = false;
+		//Temporary After thermal DTS complete modify
+		//result = false;
 	}
+
+	//Initialize uninodes default value
+	uninodes->battery_condition_tc_mode = false;
 
 	return result;
 }
@@ -592,8 +699,9 @@ static ssize_t charging_restriction_show(struct device* dev, struct device_attri
 	return snprintf(buf, PAGE_SIZE, "%d", -1);
 }
 
-static ssize_t status_boot_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
-	struct power_supply* wireless_psy;
+static ssize_t status_boot_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size)
+{
+	static struct power_supply* wireless_psy = NULL;
 	struct unified_nodes* ref;
 	union power_supply_propval value = { .intval = 0, };
 	int* ori;
@@ -610,11 +718,12 @@ static ssize_t status_boot_store(struct device* dev, struct device_attribute* at
 		if (*ori != new) {
 			*ori = new;
 			if (*ori) {
-				wireless_psy = power_supply_get_by_name("wireless");
+				if (!wireless_psy)
+					 wireless_psy = power_supply_get_by_name("wireless");
+
 				if (wireless_psy) {
 					power_supply_set_property(wireless_psy,
 						POWER_SUPPLY_PROP_INPUT_SUSPEND, &value);
-					power_supply_put(wireless_psy);
 				}
 			}
 		}
@@ -701,24 +810,28 @@ static ssize_t thermald_idc_show(struct device* dev, struct device_attribute* at
 	return idc ? voter_show(idc, buf) : 0;
 }
 
-static ssize_t thermald_vdc_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
-	struct power_supply* wireless = power_supply_get_by_name("wireless");
+static ssize_t thermald_vdc_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size)
+{
+	static struct power_supply* wireless = NULL;
+	if (!wireless)
+		wireless = power_supply_get_by_name("wireless");
 
 	if (dev && dev->platform_data) {
 		int value = -1;
 		sscanf(buf, "%d", &value);
 
 		if (wireless) {
-			union power_supply_propval voltage = { .intval = value, };
+			union power_supply_propval voltage = { .intval = value * 1000, };
 			power_supply_set_property(wireless, POWER_SUPPLY_PROP_VOLTAGE_MAX, &voltage);
-			power_supply_put(wireless);
 		}
 	} else
 		pr_uninode("Error on getting voter\n");
 
 	return size;
 }
-static ssize_t thermald_vdc_show(struct device* dev, struct device_attribute* attr, char* buf) {
+
+static ssize_t thermald_vdc_show(struct device* dev, struct device_attribute* attr, char* buf)
+{
 	union power_supply_propval voltage = { .intval = 0, };
 	static struct power_supply* wireless = NULL;
 	int rc = 0;
@@ -730,7 +843,7 @@ static ssize_t thermald_vdc_show(struct device* dev, struct device_attribute* at
 		if (wireless) {
 			rc = power_supply_get_property(wireless, POWER_SUPPLY_PROP_VOLTAGE_MAX, &voltage);
 			if (!rc)
-				power_supply_put(wireless);
+				voltage.intval /= 1000;
 		}
 	} else
 		pr_uninode("Error on getting voter\n");
@@ -851,7 +964,7 @@ static ssize_t charging_step_show(struct device* dev, struct device_attribute* a
 
 	return snprintf(buf, PAGE_SIZE, "%s", ret);
 }
-
+#ifndef CONFIG_LGE_PM_CCD
 static ssize_t charging_showcase_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
 	struct unified_nodes*	ref;
 	bool*			ori;
@@ -881,7 +994,246 @@ static ssize_t charging_showcase_show(struct device* dev, struct device_attribut
 
 	return snprintf(buf, PAGE_SIZE, "%d", ret);
 }
+#endif
+#ifdef CONFIG_LGE_PM_CCD
+static ssize_t time_to_full_now_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	int new;
+	struct unified_nodes* ref = NULL;
+	struct power_supply* ttf_psy = NULL;
+	pr_uninode("Storing %s\n", buf);
 
+	if (dev && dev->platform_data) {
+		ref = (struct unified_nodes*)dev->platform_data;
+		if (ref->ttf_psy)
+			ttf_psy = power_supply_get_by_name(ref->ttf_psy);
+
+		sscanf(buf, "%d", &new);
+		((struct unified_nodes*)dev->platform_data)->time_to_full_now = new;
+
+		if (ttf_psy) {
+			power_supply_changed(ttf_psy);
+			power_supply_put(ttf_psy);
+		}
+	}
+
+	return size;
+}
+
+static ssize_t time_to_full_now_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	int ret = 0;
+
+	if (dev && dev->platform_data) {
+		ret = ((struct unified_nodes*)dev->platform_data)->time_to_full_now;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d", ret);
+}
+
+static ssize_t ttf_capacity_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	int new;
+	struct unified_nodes* ref = NULL;
+	struct power_supply* ttf_psy = NULL;
+	pr_uninode("Storing %s\n", buf);
+
+	if (dev && dev->platform_data) {
+		ref = (struct unified_nodes*)dev->platform_data;
+		if (ref->ttf_psy)
+			ttf_psy = power_supply_get_by_name(ref->ttf_psy);
+
+		sscanf(buf, "%d", &new);
+		((struct unified_nodes*)dev->platform_data)->ttf_capacity = new;
+
+		if (ttf_psy) {
+			power_supply_changed(ttf_psy);
+			power_supply_put(ttf_psy);
+		}
+	}
+
+	return size;
+}
+
+static ssize_t ttf_capacity_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	int ret = 0;
+
+	if (dev && dev->platform_data) {
+		ret = ((struct unified_nodes*)dev->platform_data)->ttf_capacity;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d", ret);
+}
+
+static ssize_t aicl_done_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	int new;
+	pr_uninode("Storing %s\n", buf);
+
+	if (dev && dev->platform_data) {
+		sscanf(buf, "%d", &new);
+		((struct unified_nodes*)dev->platform_data)->aicl_done = new;
+	}
+
+	return size;
+}
+
+static ssize_t aicl_done_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	int ret = 0;
+
+	if (dev && dev->platform_data) {
+		ret = ((struct unified_nodes*)dev->platform_data)->aicl_done;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d", ret);
+}
+
+static ssize_t ccd_icl_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct voter_entry* iusb = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_icl.type == VOTER_TYPE_IUSB)
+		iusb = &((struct unified_nodes*)dev->platform_data)->ccd_icl;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return iusb ? voter_store(iusb, buf, size) : size;
+}
+static ssize_t ccd_icl_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct voter_entry* iusb = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_icl.type == VOTER_TYPE_IUSB)
+		iusb = &((struct unified_nodes*)dev->platform_data)->ccd_icl;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return iusb ? voter_show(iusb, buf) : 0;
+}
+
+static ssize_t ccd_fcc_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct voter_entry* ibat = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_fcc.type == VOTER_TYPE_IBAT)
+		ibat = &((struct unified_nodes*)dev->platform_data)->ccd_fcc;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return ibat ? voter_store(ibat, buf, size) : size;
+}
+static ssize_t ccd_fcc_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct voter_entry* ibat = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_fcc.type == VOTER_TYPE_IBAT)
+		ibat = &((struct unified_nodes*)dev->platform_data)->ccd_fcc;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return ibat ? voter_show(ibat, buf) : 0;
+}
+static ssize_t ccd_vfloat_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct voter_entry* vfloat = NULL;
+	int float_voltage = 0;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_vfloat.type == VOTER_TYPE_VFLOAT)
+		vfloat = &((struct unified_nodes*)dev->platform_data)->ccd_vfloat;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	sscanf(buf, "%d", &float_voltage);
+	veneer_voter_set(vfloat, float_voltage);
+
+	return size;
+}
+static ssize_t ccd_vfloat_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct voter_entry* vfloat = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_vfloat.type == VOTER_TYPE_VFLOAT)
+		vfloat = &((struct unified_nodes*)dev->platform_data)->ccd_vfloat;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return vfloat ? voter_show(vfloat, buf) : 0;
+}
+
+static ssize_t ccd_input_suspend_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct voter_entry* input_suspend = NULL;
+	struct voter_entry* wlc_suspend = NULL;
+	int suspend = 0;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_input_suspend.type == VOTER_TYPE_IUSB)
+		input_suspend = &((struct unified_nodes*)dev->platform_data)->ccd_input_suspend;
+	else
+		pr_uninode("Error on getting input_suspend voter\n");
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_wlc_suspend.type == VOTER_TYPE_IDC)
+		wlc_suspend = &((struct unified_nodes*)dev->platform_data)->ccd_wlc_suspend;
+	else
+		pr_uninode("Error on getting wlc_suspend voter\n");
+
+	sscanf(buf, "%d", &suspend);
+#if defined(CONFIG_QPNP_SMB5) || defined(CONFIG_QPNP_QG)
+	if (suspend == 1){
+#else
+	if (suspend == 0){
+#endif
+		veneer_voter_set(input_suspend, VOTE_TOTALLY_BLOCKED);
+		veneer_voter_set(wlc_suspend, VOTE_TOTALLY_BLOCKED);
+		pr_uninode("Input Suspended by CCD voter\n");
+	}else {
+		veneer_voter_set(input_suspend, VOTE_TOTALLY_RELEASED);
+		veneer_voter_set(wlc_suspend, VOTE_TOTALLY_RELEASED);
+		pr_uninode("Input Released by CCD voter\n");
+	}
+
+	return size;
+}
+static ssize_t ccd_input_suspend_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct voter_entry* input_suspend = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_input_suspend.type == VOTER_TYPE_IUSB)
+		input_suspend = &((struct unified_nodes*)dev->platform_data)->ccd_input_suspend;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return input_suspend ? voter_show(input_suspend, buf) : 0;
+}
+static ssize_t ccd_batchg_en_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct voter_entry* batchg_en = NULL;
+	int battery_charging_enabled;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_batchg_en.type == VOTER_TYPE_IBAT)
+		batchg_en = &((struct unified_nodes*)dev->platform_data)->ccd_batchg_en;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	sscanf(buf, "%d", &battery_charging_enabled);
+	if (battery_charging_enabled == 0){
+		veneer_voter_set(batchg_en, VOTE_TOTALLY_BLOCKED);
+		pr_uninode("Battery Charging blocked by CCD voter\n");
+	}else {
+		veneer_voter_set(batchg_en, VOTE_TOTALLY_RELEASED);
+		pr_uninode("Battery Charging released by CCD voter\n");
+	}
+
+	return size;
+}
+static ssize_t ccd_batchg_en_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct voter_entry* batchg_en = NULL;
+
+	if (dev && dev->platform_data &&
+		((struct unified_nodes*)dev->platform_data)->ccd_batchg_en.type == VOTER_TYPE_IBAT)
+		batchg_en = &((struct unified_nodes*)dev->platform_data)->ccd_batchg_en;
+	else
+		pr_uninode("Error on getting voter\n");
+
+	return batchg_en ? voter_show(batchg_en, buf) : 0;
+}
+#endif
 static ssize_t charging_completed_show(struct device* dev, struct device_attribute* attr, char* buf) {
 	int ret = 1;
 	struct power_supply* battery = power_supply_get_by_name("battery");
@@ -1056,16 +1408,55 @@ static ssize_t battery_condition_show(struct device* dev, struct device_attribut
 	int condition_ret_good = 2;
 	int condition_ret_bad = 3;
 
+	int condition_msd = 10;
+
+	bool tc_mode = 0;
+
+	if (dev && dev->platform_data) {
+		tc_mode = ((struct unified_nodes*)dev->platform_data)->battery_condition_tc_mode;
+		if (tc_mode){
+			ret = ((struct unified_nodes*)dev->platform_data)->battery_condition_tc_value;
+			pr_uninode("Battery Condition tc_mode = %d tc_value = %d\n",tc_mode, ret);
+			return snprintf(buf, PAGE_SIZE, "%d", ret);
+		}
+	}
+
 	if (!!battery_age_show(dev, attr, buf) && !!sscanf(buf, "%d", &age) && age >= 0) {
+		if (age >= 100)
+			age = 100;
+		else
+			condition_msd =  ( age /10 ) + 1;
+
 		if (age >= age_thresold_best)
-			ret = condition_ret_best;
+			ret = (condition_msd * 10) + condition_ret_best;
 		else if (age >= age_thresold_good)
-			ret = condition_ret_good;
+			ret = (condition_msd * 10) + condition_ret_good;
 		else if (age >= age_thresold_bad)
-			ret = condition_ret_bad;
+			ret = (condition_msd * 10) + condition_ret_bad;
 	}
 
 	return snprintf(buf, PAGE_SIZE, "%d", ret);
+}
+
+static ssize_t battery_condition_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	int* ori = NULL;
+	int new;
+	bool* tc_mode = NULL;
+	pr_uninode("Storing %s\n", buf);
+
+	if (dev && dev->platform_data) {
+		ori = &((struct unified_nodes*)dev->platform_data)->battery_condition_tc_value;
+		sscanf(buf, "%d", &new);
+		*ori = new;
+		tc_mode = &((struct unified_nodes*)dev->platform_data)->battery_condition_tc_mode;
+		*tc_mode = true;
+		pr_uninode("Battery Condition TC set mode = %d value = %d\n", *tc_mode, *ori);
+	}
+
+	if (!tc_mode || !ori)
+		pr_uninode("Battery Condition TC Mode or Value is Null\n");
+
+	return size;
 }
 
 static ssize_t battery_cycle_show(struct device* dev, struct device_attribute* attr, char* buf) {
@@ -1288,12 +1679,48 @@ static ssize_t support_fastchg_show(struct device* dev, struct device_attribute*
 	return snprintf(buf, PAGE_SIZE, "%d", ret);
 }
 
+#ifdef CONFIG_LGE_PM_CCD
+#define BSM_FCC_MA 		"2000"
+#define BSM_FCC_CLEAR 	"-1"
+static ssize_t bsm_timetofull_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
+	struct unified_nodes*	ref;
+	struct power_supply* 	batt_psy = power_supply_get_by_name("battery");
+	union power_supply_propval val = {0, };
+	struct voter_entry* ccd_bsm_fcc = NULL;
+	int*			ori;
+	int 		new;
+
+	pr_uninode("Storing BSM Time To Full\n");
+	if (dev && dev->platform_data) {
+		ref = (struct unified_nodes*)dev->platform_data;
+		ori = &ref->bsm_timetofull;
+
+		sscanf(buf, "%d", &new);
+		if (*ori != new) {
+			*ori = new;
+			((struct unified_nodes*)dev->platform_data)->bsm_timetofull = new;
+			ccd_bsm_fcc = &((struct unified_nodes*)dev->platform_data)->ccd_fcc;
+			if (!strcmp(buf, "0")){
+				voter_store(ccd_bsm_fcc, BSM_FCC_CLEAR, sizeof(BSM_FCC_CLEAR));
+				pr_uninode("Clear BSM FCC voter\n");
+			} else {
+				voter_store(ccd_bsm_fcc, BSM_FCC_MA, sizeof(BSM_FCC_MA));
+				pr_uninode("Set BSM FCC voter (%s)\n", BSM_FCC_MA);
+			}
+			val.intval = 1;
+			power_supply_set_property(batt_psy, POWER_SUPPLY_PROP_FORCE_UPDATE, &val);
+		}
+	}
+
+	return size;
+}
+#else
 static ssize_t bsm_timetofull_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t size) {
 	struct unified_nodes*	ref;
 	int*			ori;
 	int 		new;
 
-	pr_uninode("Storing %s\n", buf);
+    pr_uninode("Storing %s\n", buf);
 	if (dev && dev->platform_data) {
 		ref = (struct unified_nodes*)dev->platform_data;
 		ori = &ref->bsm_timetofull;
@@ -1304,9 +1731,10 @@ static ssize_t bsm_timetofull_store(struct device* dev, struct device_attribute*
 			charging_time_update(CHARGING_SUPPLY_TYPE_NONE, true);
 		}
 	}
-
 	return size;
 }
+#endif
+
 static ssize_t bsm_timetofull_show(struct device* dev, struct device_attribute* attr, char* buf) {
 	int ret = 0;
 
@@ -1461,7 +1889,10 @@ static ssize_t actm_sensor_store(
 		if (ori) {
 			sscanf(buf, "%d", &new);
 			if (*ori != new) {
-				if (new == 1 || new == 2 || new == 3)
+				if (new ==  1 || new ==  2 || new ==  3 ||
+					new == 11 || new == 12 || new == 13 ||
+					new == 21 || new == 22 || new == 23 ||
+					new == 31 || new == 32 || new == 33 )
 					*ori = new;
 			}
 		}
@@ -1723,38 +2154,6 @@ static ssize_t irc_resistance_show(
 	return snprintf(buf, PAGE_SIZE, "%d", ret);
 }
 
-static ssize_t pps_ta_count_store(
-	struct device* dev, struct device_attribute* attr, const char* buf, size_t size)
-{
-	struct unified_nodes *ref = NULL;
-	int *ori = NULL;
-	int new = -9999;
-
-	pr_uninode("Storing %s\n", buf);
-	if (dev && dev->platform_data) {
-		ref = (struct unified_nodes*)dev->platform_data;
-		ori = &ref->pps_ta_count;
-
-		sscanf(buf, "%d", &new);
-		if (*ori != new) {
-			*ori = new;
-		}
-	}
-
-	return size;
-}
-
-static ssize_t pps_ta_count_show(
-	struct device* dev, struct device_attribute* attr, char* buf)
-{
-	int ret = -2;
-
-	if (dev && dev->platform_data)
-		ret = ((struct unified_nodes*)dev->platform_data)->pps_ta_count;
-
-	return snprintf(buf, PAGE_SIZE, "%d", ret);
-}
-
 static struct device_attribute unified_nodes_dattrs [] = {
 /*  0 */__ATTR(actm_mode,                0664, actm_mode_show,     actm_mode_store    ),
 /*  1 */__ATTR(actm_lcdon_offset,        0664, actm_lcdon_show,    actm_lcdon_store   ),
@@ -1805,13 +2204,24 @@ static struct device_attribute unified_nodes_dattrs [] = {
 	__ATTR(charging_restriction,	0664, charging_restriction_show,	charging_restriction_store),
 	__ATTR(charging_enable,		0664, charging_enable_show,		charging_enable_store),
 	__ATTR(charging_step,		0644, charging_step_show,		charging_step_store),
+#ifdef CONFIG_LGE_PM_CCD
+	__ATTR(time_to_full_now,	0664, time_to_full_now_show,	time_to_full_now_store),
+	__ATTR(ttf_capacity,		0664, ttf_capacity_show,		ttf_capacity_store),
+	__ATTR(aicl_done,			0664, aicl_done_show,			aicl_done_store),
+	__ATTR(ccd_icl,		0664, ccd_icl_show,		ccd_icl_store),
+	__ATTR(ccd_fcc,		0664, ccd_fcc_show,		ccd_fcc_store),
+	__ATTR(ccd_vfloat,		0664, ccd_vfloat_show,		ccd_vfloat_store),
+	__ATTR(ccd_input_suspend,		0664, ccd_input_suspend_show,		ccd_input_suspend_store),
+	__ATTR(ccd_batchg_en,		0664, ccd_batchg_en_show,		ccd_batchg_en_store),
+#else
 	__ATTR(charging_showcase,	0664, charging_showcase_show,		charging_showcase_store),
+#endif
 	__ATTR(charging_completed,	0444, charging_completed_show,		NULL),
 	__ATTR(fake_battery,		0664, fake_battery_show,		fake_battery_store),
 	__ATTR(fake_sdpmax,		0664, fake_sdpmax_show,			fake_sdpmax_store),
 	__ATTR(fake_hvdcp,		0664, fake_hvdcp_show, 			fake_hvdcp_store),
 	__ATTR(battery_age,		0444, battery_age_show,			NULL),
-	__ATTR(battery_condition,	0444, battery_condition_show,		NULL),
+	__ATTR(battery_condition,	0664, battery_condition_show,		battery_condition_store),
 	__ATTR(battery_cycle,		0444, battery_cycle_show,		NULL),
 	__ATTR(battery_valid,		0664, battery_valid_show,		battery_valid_store),
 	__ATTR(charger_name,		0664, charger_name_show,		charger_name_store),
@@ -1824,7 +2234,6 @@ static struct device_attribute unified_nodes_dattrs [] = {
 	__ATTR(bsm_timetofull,		0664, bsm_timetofull_show,	bsm_timetofull_store),
 	__ATTR(factory_xo_therm, 	0444, factory_xo_therm_show, 	NULL),
 	__ATTR(factory_bd_therm, 	0444, factory_bd_therm_show, 	NULL),
-	__ATTR(pps_ta_count,		0444, pps_ta_count_show, pps_ta_count_store),
 
 };
 

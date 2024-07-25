@@ -390,8 +390,11 @@ static int fat_mirror_bhs(struct super_block *sb, struct buffer_head **bhs,
 				err = -ENOMEM;
 				goto error;
 			}
+			/* Avoid race with userspace read via bdev */
+			lock_buffer(c_bh);
 			memcpy(c_bh->b_data, bhs[n]->b_data, sb->s_blocksize);
 			set_buffer_uptodate(c_bh);
+			unlock_buffer(c_bh);
 			mark_buffer_dirty_inode(c_bh, sbi->fat_inode);
 			if (sb->s_flags & SB_SYNCHRONOUS)
 				err = sync_dirty_buffer(c_bh);
@@ -854,7 +857,7 @@ int fat_ent_update_badclusters_after(struct super_block *sb, int entry)
 	lock_fat(sbi);
 	err = nr_bhs = 0;
 
-	if(entry >= sbi->max_cluster || entry < FAT_START_ENT)
+	if (entry >= sbi->max_cluster || entry < FAT_START_ENT)
 		return EFAULT;
 
 	fatent_init(&fatent);
@@ -863,17 +866,17 @@ int fat_ent_update_badclusters_after(struct super_block *sb, int entry)
 		fatent_set_entry(&fatent, entry);
 //		fat_msg_ratelimit(sb, KERN_WARNING, "bad geometry: entry : %d ",entry);
 		err = fat_ent_read_block(sb, &fatent);
-		if(err)
+		if (err)
 			goto out;
 		do {
-			if(ops->ent_get(&fatent)==FAT_ENT_FREE) {
+			if (ops->ent_get(&fatent)==FAT_ENT_FREE) {
 
 				// make the cluster as BAD_CLUSTER
 				ops->ent_put(&fatent, FAT_ENT_BAD);
 				fat_collect_bhs(bhs, &nr_bhs, &fatent);
 				mark_bad_count++;
 
-				if(sbi->free_clusters != -1)
+				if (sbi->free_clusters != -1)
 					sbi->free_clusters--;
 			}
 			if (nr_bhs + fatent.nr_bhs > MAX_BUF_PER_PAGE) {

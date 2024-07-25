@@ -473,8 +473,8 @@ static int mmc_mq_init(struct mmc_queue *mq, struct mmc_card *card,
 #ifdef CONFIG_LFS_MM_BDI_STRICTLIMIT_DIRTY
 	if (mmc_card_sd(card)) {
 		mq->queue->backing_dev_info->capabilities |= BDI_CAP_STRICTLIMIT;
-		bdi_set_min_ratio(mq->queue->backing_dev_info, 0);
-		bdi_set_max_ratio(mq->queue->backing_dev_info, 10);
+		bdi_set_min_ratio(mq->queue->backing_dev_info, 30);
+		bdi_set_max_ratio(mq->queue->backing_dev_info, 60);
 	}
 #endif
 

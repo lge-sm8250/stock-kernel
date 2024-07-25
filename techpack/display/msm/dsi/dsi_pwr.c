@@ -429,7 +429,6 @@ int dsi_pwr_set_regulator(struct dsi_regulator_info *regs, int mode)
 	return rc;
 }
 #endif
-
 /*
  * dsi_pwr_panel_regulator_mode_set()
  * set the AB/IBB regulator mode for OLED panel

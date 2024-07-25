@@ -12,7 +12,7 @@
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
 
-#ifdef CONFIG_MACH_KONA_TIMELM
+#ifdef CONFIG_MACH_LITO_WINGLM
 #include <soc/qcom/lge/board_lge.h>
 #endif
 
@@ -764,21 +764,27 @@ int cam_sensor_match_id(struct cam_sensor_ctrl_t *s_ctrl)
 		s_ctrl->sensor_probe_addr_type,
 		s_ctrl->sensor_probe_data_type);
 
-	CAM_DBG(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
+	CAM_ERR(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
 		chipid, slave_info->sensor_id);
 
-#ifdef CONFIG_MACH_KONA_TIMELM
-	if (!lge_get_qemmode_boot() && slave_info->sensor_id == 0x6d) {
-		if(chipid != 0x6d)
-			CAM_ERR(CAM_SENSOR, "failed to read sensor id!. read id: 0x%x", chipid);
-		return 0;
-	}
-#endif
+#ifndef CONFIG_MACH_LITO_WINGLM
 	if (cam_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
 		CAM_WARN(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
 				chipid, slave_info->sensor_id);
 		return -ENODEV;
 	}
+#else
+	if (cam_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
+		CAM_WARN(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
+				chipid, slave_info->sensor_id);
+		if (lge_get_qemmode_boot()) {
+			return -ENODEV;
+		} else {
+			rc = 0;
+		}
+	}
+#endif
+
 	return rc;
 }
 
@@ -1314,7 +1320,7 @@ int cam_sensor_power_up(struct cam_sensor_ctrl_t *s_ctrl)
 	if (rc < 0)
 		CAM_ERR(CAM_SENSOR, "cci_init failed: rc: %d", rc);
 #ifdef CONFIG_MACH_LGE
-	complete(&cci_dev->sensor_complete);
+    complete(&cci_dev->sensor_complete);
 #endif
 
 #ifdef CONFIG_MACH_LGE
@@ -1366,9 +1372,8 @@ int cam_sensor_power_down(struct cam_sensor_ctrl_t *s_ctrl)
 
 	camera_io_release(&(s_ctrl->io_master_info));
 #ifdef CONFIG_MACH_LGE
-	reinit_completion(&cci_dev->sensor_complete);
+    reinit_completion(&cci_dev->sensor_complete);
 #endif
-
 #ifdef CONFIG_MACH_LGE
 	CAM_ERR(CAM_SENSOR, "slave_addr:0x%x,sensor_id:0x%x",
 		s_ctrl->sensordata->slave_info.sensor_slave_addr,

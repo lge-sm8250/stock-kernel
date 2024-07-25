@@ -224,11 +224,11 @@ struct gendisk {
 	int node_id;
 	struct badblocks *bb;
 	struct lockdep_map lockdep_map;
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	int media_present;
 	int interfaces;
 #endif
+
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);

@@ -422,6 +422,7 @@ struct msm_ois_readout_buffer {
     int32_t buffer_head;
     int32_t buffer_tail;
 };
+/* LGE_CHANGE_E, OIS Bring up, 2019-10-07, yonghwan.lym@lge.com */
 
 #define MSM_ACT_DATA_BUFFER_SIZE 15
 struct msm_act_readout {
@@ -434,5 +435,4 @@ struct msm_act_readout_buffer {
     int32_t buffer_head;
     int32_t buffer_tail;
 };
-/* LGE_CHANGE_E, OIS Bring up, 2019-10-07, yonghwan.lym@lge.com */
 #endif /* _CAM_SENSOR_CMN_HEADER_ */

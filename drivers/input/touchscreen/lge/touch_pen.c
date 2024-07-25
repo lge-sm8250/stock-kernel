@@ -389,7 +389,7 @@ static int pen_init_input(struct module_data *md)
 	input_set_abs_params(input, ABS_X, 0, 1080, 0, 0);
 	input_set_abs_params(input, ABS_Y, 0, 2460, 0, 0);
 	input_set_abs_params(input, ABS_DISTANCE, 0, 1, 0, 0);
-	input_set_abs_params(input, ABS_PRESSURE, 0, 4096, 0, 0);
+	input_set_abs_params(input, ABS_PRESSURE, 0, 4095, 0, 0);
 	input_set_abs_params(input, ABS_TILT_X, 0, 180, 0, 0);
 	input_set_abs_params(input, ABS_TILT_Y, 0, 180, 0, 0);
 	input_set_abs_params(input, ABS_MT_ORIENTATION, 0,

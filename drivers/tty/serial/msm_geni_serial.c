@@ -2540,6 +2540,7 @@ exit_startup:
 		msm_geni_serial_power_off(&msm_port->uport);
 	msm_port->startup_in_progress = false;
 	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s: ret:%d\n", __func__, ret);
+
 	return ret;
 }
 
@@ -2817,6 +2818,7 @@ void msm_geni_serial_set_uart_console_status(int status)
 		pr_info("geni_uart_console_status : power/volup keys are not pressed\n");
 		return;
 	}
+
 	pr_info("geni_uart_console_status : %d to %d\n",g_ms_status, status);
 	g_ms_status = status;
 }
@@ -2844,6 +2846,7 @@ int msm_geni_serial_set_uart_console(int enable)
 		pr_err("Power/volup are not pressed. Block uart resume\n");
 		return ret;
 	}
+
 	dev_port = get_port_from_line(0, true);
 	if (IS_ERR_OR_NULL(dev_port)) {
 		ret = PTR_ERR(dev_port);
@@ -3619,7 +3622,6 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 
 	dev_port->name = devm_kasprintf(uport->dev, GFP_KERNEL,
 					"msm_serial_geni%d", uport->line);
-
 	irq_set_status_flags(uport->irq, IRQ_NOAUTOEN);
 #ifndef CONFIG_LGE_USB_DEBUGGER
 	ret = devm_request_irq(uport->dev, uport->irq, msm_geni_serial_isr,
@@ -3640,7 +3642,12 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 			goto exit_geni_serial_probe;
 		}
 	}
+
+	if(is_console)
+		disable_irq(uport->irq);
+
 #endif
+
 	uport->private_data = (void *)drv;
 	platform_set_drvdata(pdev, dev_port);
 	if (is_console) {

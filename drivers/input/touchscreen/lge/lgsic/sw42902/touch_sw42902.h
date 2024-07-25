@@ -298,7 +298,8 @@ static inline u32 sw42902_tc_sts_running_sts(int status)
 #define GRAB_TOUCH_CTRL				(0x67)
 #define SPECIAL_IME_STATUS			(0x68)
 #define SPECIAL_CALL_INFO			(0x69)
-#define SPECIAL_SENSITIVE_INFO		(0x6A)
+#define SPECIAL_SENSITIVE_INFO			(0x6A)
+#define FM_RADIO_CTRL				(0x83)
 
 
 
@@ -858,7 +859,7 @@ extern int sw42902_sleep_ctrl(struct device *dev, int new_status);
 extern int sw42902_chip_info_load(struct device *dev);
 */
 extern int sw42902_reset_ctrl(struct device *dev, int ctrl);
-extern bool is_ddic_name(char *ddic_name);
+extern bool is_ddic_name(uint32_t display_idx, char *ddic_name);
 #if defined(CONFIG_LGE_TOUCH_CORE_QCT)
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_RECOVERY_ESD) || IS_ENABLED(CONFIG_LGE_TOUCH_PANEL_GLOBAL_RESET)
 extern void lge_mdss_report_panel_dead(void);

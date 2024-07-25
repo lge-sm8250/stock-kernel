@@ -17,10 +17,10 @@
 #obj-$(CONFIG_NFC_NXP_NCI)	+= nxp-nci/
 #obj-$(CONFIG_NFC_S3FWRN5)	+= s3fwrn5/
 #obj-$(CONFIG_NFC_ST95HF)	+= st95hf/
-#obj-$(CONFIG_NFC_NQ)           += nq-nci.o
+#obj-$(CONFIG_NFC_NQ)            += nq-nci.o
 obj-$(CONFIG_LGE_NFC_PN553)	+= pn553/
-obj-$(CONFIG_NFC_CXD22XX)       += cxd22xx/
 obj-$(CONFIG_LGE_NFC_SN100X)	+= sn100x/
 obj-$(CONFIG_LGE_NFC_SN100X)	+= p73-spi/
+obj-$(CONFIG_NFC_SELECTIVE_DRIVER)	+= lge/
 
 ccflags-$(CONFIG_NFC_DEBUG) := -DDEBUG

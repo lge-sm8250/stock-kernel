@@ -191,7 +191,7 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 #define S_SMP " SMP"
 
 #ifdef CONFIG_MACH_LGE
-DECLARE_PER_CPU(struct pt_regs, regs_before_stop);
+extern DEFINE_PER_CPU(struct pt_regs, regs_before_stop);
 #endif
 
 static int __die(const char *str, int err, struct pt_regs *regs)
@@ -212,7 +212,6 @@ static int __die(const char *str, int err, struct pt_regs *regs)
 #ifdef CONFIG_MACH_LGE
 	per_cpu(regs_before_stop, raw_smp_processor_id()) = *regs;
 #endif
-	__show_regs(regs);
 	pr_emerg("Process %.*s (pid: %d, stack limit = 0x%p)\n",
 		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk),
 		 end_of_stack(tsk));

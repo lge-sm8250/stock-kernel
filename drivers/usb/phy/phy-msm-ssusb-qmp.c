@@ -110,12 +110,12 @@ struct qmp_reg_val {
 };
 
 #ifdef CONFIG_LGE_USB_GADGET
-/* reg for tuning Tx swing */
-#define QSERDES_TXA_TX_DRV_LVL		0x1214
-#define QSERDES_TXB_TX_DRV_LVL		0x1614
+/* reg for tuning Tx swing(TX_DRV_LVL) */
+#define QSERDES_TXA_TX_DRV_LVL		0x12E8
+#define QSERDES_TXB_TX_DRV_LVL		0x16E8
 /* reg for tuning Tx precursor emphasis */
-#define QSERDES_TXA_PRE_EMPH		0x1308
-#define QSERDES_TXB_PRE_EMPH		0x1708
+#define QSERDES_TXA_PRE_EMPH		0x22E8
+#define QSERDES_TXB_PRE_EMPH		0x26E8
 /* reg for tuning Tx postcursor emphasis */
 #define QSERDES_TXA_TX_EMP_POST1_LVL	0x120C
 #define QSERDES_TXB_TX_EMP_POST1_LVL	0x160C
@@ -128,35 +128,35 @@ struct qmp_reg_val {
 #define RXA_RX_EQU_ADAPTOR_CNTRL4	0x14F4
 #define RXB_RX_EQU_ADAPTOR_CNTRL4	0x18F4
 
-static int32_t override_tx_a_swing = -1;
-module_param(override_tx_a_swing, int, S_IRUGO|S_IWUSR);
+static uint32_t override_tx_a_swing = 0;
+module_param(override_tx_a_swing, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_a_swing, "Override TX_A_SWING tuning register");
 
-static int32_t override_tx_b_swing = -1;
-module_param(override_tx_b_swing, int, S_IRUGO|S_IWUSR);
+static uint32_t override_tx_b_swing = 0;
+module_param(override_tx_b_swing, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_b_swing, "Override TX_B_SWING tuning register");
 
-static int32_t override_tx_a_pre_emphasis = -1;
-module_param(override_tx_a_pre_emphasis, int, S_IRUGO|S_IWUSR);
+static uint32_t override_tx_a_pre_emphasis = 0;
+module_param(override_tx_a_pre_emphasis, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_a_pre_emphasis, "Overide TX_A_PRE_EMPHASIS tuning register");
 
-static int32_t override_tx_b_pre_emphasis = -1;
+static uint32_t override_tx_b_pre_emphasis = 0;
 module_param(override_tx_b_pre_emphasis, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_b_pre_emphasis, "Overide TX_B_PRE_EMPHASIS tuning register");
 
-static int32_t override_tx_a_post_emphasis = -1;
+static uint32_t override_tx_a_post_emphasis = 0;
 module_param(override_tx_a_post_emphasis, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_a_post_emphasis, "Overide TX_A_EMPHASIS_POST tuning register");
 
-static int32_t override_tx_b_post_emphasis = -1;
+static uint32_t override_tx_b_post_emphasis = 0;
 module_param(override_tx_b_post_emphasis, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_tx_b_post_emphasis, "Overide TX_B_EMPHASIS_POST tuning register");
 
-static int32_t override_rx_a_equ_gain2 = -1;
+static uint32_t override_rx_a_equ_gain2 = 0;
 module_param(override_rx_a_equ_gain2, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_rx_a_equ_gain2, "Override rx_a_equalization gain2 tuning register");
 
-static int32_t override_rx_b_equ_gain2 = -1;
+static uint32_t override_rx_b_equ_gain2 = 0;
 module_param(override_rx_b_equ_gain2, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(override_rx_b_equ_gain2, "Override rx_b_equalization gain2 tuning register");
 #endif
@@ -306,6 +306,15 @@ static int msm_ssusb_qmp_ldo_enable(struct msm_ssphy_qmp *phy, int on)
 		return 0;
 	}
 
+#ifdef CONFIG_LGE_USB
+	/* XXX:
+	 * In USB compliance mode, do not turn off the regulator of the PHY.
+	 * Otherwise, SS terms are turned on and fail in TD 4.1.1 and TD 4.7.5.
+	 */
+	if ((phy->phy.flags & COMPLIANCE_MODE) && !on)
+		return 0;
+#endif
+
 	phy->power_enabled = on;
 
 	min = on ? 1 : 0; /* low or none? */
@@ -416,172 +425,149 @@ static int configure_phy_regs(struct usb_phy *uphy,
 		reg++;
 	}
 #ifdef CONFIG_LGE_USB_GADGET
-	if ((override_tx_a_pre_emphasis >= 0)  && (override_tx_a_pre_emphasis < 32)) {
-		dev_dbg(uphy->dev, "%s(), Programming TX_A_PRE_EMPHASIS"
-			" tuning register as: %d",
-			__func__,
-			override_tx_a_pre_emphasis);
-		writel_relaxed(override_tx_a_pre_emphasis | 0x20,
-			phy->base + QSERDES_TXA_PRE_EMPH);
-	} else {
-		if (phy->tx_a_pre_emphasis)
-			writel_relaxed(phy->tx_a_pre_emphasis | 0x20,
-				phy->base + QSERDES_TXA_PRE_EMPH);
-	}
+        if (override_tx_a_pre_emphasis) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_A_PRE_EMPHASIS"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_tx_a_pre_emphasis);
+                writel_relaxed(override_tx_a_pre_emphasis | 0x20,
+                                phy->base + QSERDES_TXA_PRE_EMPH);
+        } else {
+                if (phy->tx_a_pre_emphasis)
+                        writel_relaxed(phy->tx_a_pre_emphasis | 0x20,
+                                        phy->base + QSERDES_TXA_PRE_EMPH);
+        }
 
-	if ((override_tx_b_pre_emphasis >= 0) && (override_tx_b_pre_emphasis < 32)) {
-		dev_dbg(uphy->dev, "%s(), Programming TX_B_PRE_EMPHASIS"
-			" tuning register as: %d",
-			__func__,
-			override_tx_b_pre_emphasis);
-		writel_relaxed(override_tx_b_pre_emphasis | 0x20,
-			phy->base + QSERDES_TXB_PRE_EMPH);
-	} else {
-		if (phy->tx_b_pre_emphasis)
-			writel_relaxed(phy->tx_b_pre_emphasis | 0x20,
-				phy->base + QSERDES_TXB_PRE_EMPH);
-	}
+        if (override_tx_b_pre_emphasis) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_B_PRE_EMPHASIS"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_tx_b_pre_emphasis);
+                writel_relaxed(override_tx_b_pre_emphasis | 0x20,
+                                phy->base + QSERDES_TXB_PRE_EMPH);
+        } else {
+                if (phy->tx_b_pre_emphasis)
+                        writel_relaxed(phy->tx_b_pre_emphasis | 0x20,
+                                        phy->base + QSERDES_TXB_PRE_EMPH);
+        }
 
-	if ((override_tx_a_swing >= 0) && (override_tx_a_swing < 32)) {
-		dev_dbg(uphy->dev, "%s(), Programming TX_A_SWING tuning"
-			" register as: %d",
-			__func__,
-			override_tx_a_swing);
-		writel_relaxed(override_tx_a_swing | 0x20,
-			phy->base + QSERDES_TXA_TX_DRV_LVL);
-	} else {
-		if (phy->tx_a_swing)
-			writel_relaxed(phy->tx_a_swing | 0x20,
-				phy->base + QSERDES_TXA_TX_DRV_LVL);
-	}
+        if (override_tx_a_swing) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_A_SWING tuning"
+                                        " register as: %d",
+                                        __func__,
+                                        override_tx_a_swing);
+                writel_relaxed(override_tx_a_swing | 0x20,
+                                phy->base + QSERDES_TXA_TX_DRV_LVL);
+        } else {
+                if (phy->tx_a_swing)
+                        writel_relaxed(phy->tx_a_swing | 0x20,
+                                        phy->base + QSERDES_TXA_TX_DRV_LVL);
+        }
 
-	if ((override_tx_b_swing >= 0) && (override_tx_b_swing < 32)) {
-		dev_dbg(uphy->dev, "%s(), Programming TX_B_SWING tuning"
-			" register as: %d",
-			__func__,
-			override_tx_b_swing);
-		writel_relaxed(override_tx_b_swing | 0x20,
-			phy->base + QSERDES_TXB_TX_DRV_LVL);
-	} else {
-		if (phy->tx_b_swing)
-			writel_relaxed(phy->tx_b_swing | 0x20,
-				phy->base + QSERDES_TXB_TX_DRV_LVL);
-	}
+	if (override_tx_b_swing) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_B_SWING tuning"
+                                        " register as: %d",
+                                        __func__,
+                                        override_tx_b_swing);
+                writel_relaxed(override_tx_b_swing | 0x20,
+                                phy->base + QSERDES_TXB_TX_DRV_LVL);
+        } else {
+                if (phy->tx_b_swing)
+                        writel_relaxed(phy->tx_b_swing | 0x20,
+                                        phy->base + QSERDES_TXB_TX_DRV_LVL);
+        }
 
-	if ((override_tx_a_post_emphasis >= 0) && (override_tx_a_post_emphasis < 32)) {
-		dev_dbg(uphy->dev, "%s(), Programming TX_A_EMP_POST1"
-			" tuning register as: %d",
-			__func__,
-			override_tx_a_post_emphasis);
-		writel_relaxed(override_tx_a_post_emphasis | 0x20,
-			phy->base + QSERDES_TXA_TX_EMP_POST1_LVL);
-	} else {
-		if (phy->tx_a_post_emphasis)
-			writel_relaxed(phy->tx_a_post_emphasis | 0x20,
-				phy->base + QSERDES_TXA_TX_EMP_POST1_LVL);
-	}
+        if (override_tx_a_post_emphasis) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_A_EMP_POST1"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_tx_a_post_emphasis);
+                writel_relaxed(override_tx_a_post_emphasis | 0x20,
+                                phy->base + QSERDES_TXA_TX_EMP_POST1_LVL);
+        } else {
+                if (phy->tx_a_post_emphasis)
+                        writel_relaxed(phy->tx_a_post_emphasis | 0x20,
+                                        phy->base + QSERDES_TXA_TX_EMP_POST1_LVL);
+        }
 
-	if ((override_tx_b_post_emphasis >= 0) && (override_tx_b_post_emphasis < 32)){
-		dev_dbg(uphy->dev, "%s(), Programming TX_B_EMP_POST1"
-			" tuning register as: %d",
-			__func__,
-			override_tx_b_post_emphasis);
-		writel_relaxed(override_tx_b_post_emphasis | 0x20,
-			phy->base + QSERDES_TXB_TX_EMP_POST1_LVL);
-	} else {
-		if (phy->tx_b_post_emphasis)
-			writel_relaxed(phy->tx_b_post_emphasis | 0x20,
-				phy->base + QSERDES_TXB_TX_EMP_POST1_LVL);
-	}
+        if (override_tx_b_post_emphasis) {
+                dev_dbg(uphy->dev, "%s(), Programming TX_B_EMP_POST1"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_tx_b_post_emphasis);
+                writel_relaxed(override_tx_b_post_emphasis | 0x20,
+                                phy->base + QSERDES_TXB_TX_EMP_POST1_LVL);
+        } else {
+                if (phy->tx_b_post_emphasis)
+                        writel_relaxed(phy->tx_b_post_emphasis | 0x20,
+                                        phy->base + QSERDES_TXB_TX_EMP_POST1_LVL);
+        }
 
-	if ((override_rx_a_equ_gain2 >= 0) || (phy->rx_a_equ_gain2 >= 0)) {
+	if (override_rx_a_equ_gain2 || phy->rx_a_equ_gain2) {
 		/* Equalizer gain adaptation must be turned off
 		 * to apply manual settings. */
 		status = readl_relaxed(phy->base + RXA_RX_EQU_ADAPTOR_CNTRL2);
-		writel_relaxed(status | 0x50, phy->base + RXA_RX_EQU_ADAPTOR_CNTRL2);
+		writel_relaxed(status | 0x50,
+				phy->base + RXA_RX_EQU_ADAPTOR_CNTRL2);
 
 		status = readl_relaxed(phy->base + RXA_RX_EQU_ADAPTOR_CNTRL3);
-		writel_relaxed(status | 0x4, phy->base + RXA_RX_EQU_ADAPTOR_CNTRL3);
+		writel_relaxed(status | 0x4,
+				phy->base + RXA_RX_EQU_ADAPTOR_CNTRL3);
 
 		rxa_equ_tune4 = readl_relaxed(phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
-		writel_relaxed(rxa_equ_tune4 | 0x60, phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
-	}
-	if (override_rx_a_equ_gain2 >= 0) {
-		dev_dbg(uphy->dev, "%s(), Programming rx_a_equalization gain2"
-			" tuning register as: %d",
-			__func__,
-			override_rx_a_equ_gain2);
-		writel_relaxed(rxa_equ_tune4 | override_rx_a_equ_gain2,
-			phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
-	} else {
-		if (phy->rx_a_equ_gain2)
-			writel_relaxed(rxa_equ_tune4 | phy->rx_a_equ_gain2,
+		writel_relaxed(rxa_equ_tune4 | 0x60,
 				phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
 	}
+	if (override_rx_a_equ_gain2) {
+                dev_dbg(uphy->dev, "%s(), Programming rx_a_equalization gain2"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_rx_a_equ_gain2);
+                writel_relaxed(rxa_equ_tune4 | override_rx_a_equ_gain2,
+                                phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
+        } else {
+                if (phy->rx_a_equ_gain2)
+                        writel_relaxed(rxa_equ_tune4 | phy->rx_a_equ_gain2,
+                                        phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4);
+        }
 
-	if ((override_rx_b_equ_gain2 >= 0) || (phy->rx_b_equ_gain2 >= 0)) {
+	if (override_rx_b_equ_gain2 || phy->rx_b_equ_gain2) {
 		/* Equalizer gain adaptation must be turned off
 		 * to apply manual settings. */
 		status = readl_relaxed(phy->base + RXB_RX_EQU_ADAPTOR_CNTRL2);
-		writel_relaxed(status | 0x50, phy->base + RXB_RX_EQU_ADAPTOR_CNTRL2);
+		writel_relaxed(status | 0x50,
+				phy->base + RXB_RX_EQU_ADAPTOR_CNTRL2);
 
 		status = readl_relaxed(phy->base + RXB_RX_EQU_ADAPTOR_CNTRL3);
-		writel_relaxed(status | 0x4, phy->base + RXB_RX_EQU_ADAPTOR_CNTRL3);
+		writel_relaxed(status | 0x4,
+				phy->base + RXB_RX_EQU_ADAPTOR_CNTRL3);
 
-		rxb_equ_tune4 = readl_relaxed(phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
-		writel_relaxed(rxb_equ_tune4 | 0x60, phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
-	}
-	if (override_rx_b_equ_gain2 >= 0) {
-		dev_dbg(uphy->dev, "%s(), Programming rx_b_equalization gain2"
-			" tuning register as: %d",
-			__func__,
-			override_rx_b_equ_gain2);
-		writel_relaxed(rxb_equ_tune4 | override_rx_b_equ_gain2,
-			phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
-	} else {
-		if (phy->rx_b_equ_gain2)
-			writel_relaxed(rxb_equ_tune4 | phy->rx_b_equ_gain2,
+		rxb_equ_tune4 = readl_relaxed(phy->base +
+					RXB_RX_EQU_ADAPTOR_CNTRL4);
+		writel_relaxed(rxb_equ_tune4 | 0x60,
 				phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
 	}
+        if (override_rx_b_equ_gain2) {
+                dev_dbg(uphy->dev, "%s(), Programming rx_b_equalization gain2"
+                                        " tuning register as: %d",
+                                        __func__,
+                                        override_rx_b_equ_gain2);
+                writel_relaxed(rxb_equ_tune4 | override_rx_b_equ_gain2,
+                                phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
+        } else {
+                if (phy->rx_b_equ_gain2)
+                        writel_relaxed(rxb_equ_tune4 | phy->rx_b_equ_gain2,
+                                        phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4);
+        }
+
+	pr_debug("[BSP-USB] QSERDES_TXA_TX_DRV_LVL: 0x%02X\n", readl_relaxed(phy->base + QSERDES_TXA_TX_DRV_LVL) & 0xff);
+	pr_debug("[BSP-USB] QSERDES_TXA_PRE_EMPH: 0x%02X\n", readl_relaxed(phy->base + QSERDES_TXA_PRE_EMPH) & 0xff);
+	pr_debug("[BSP-USB] QSERDES_TXA_TX_EMP_POST1_LVL: 0x%02X\n", readl_relaxed(phy->base + QSERDES_TXA_TX_EMP_POST1_LVL) & 0xff);
+
 #endif
 
 	return 0;
 }
-
-#ifdef CONFIG_LGE_USB_GADGET
-static int get_ssphy_tune_regs(struct usb_phy *uphy)
-{
-	struct msm_ssphy_qmp *phy = container_of(uphy, struct msm_ssphy_qmp, phy);
-
-	dev_dbg(uphy->dev, "[ %s ]\n", __func__);
-
-	dev_dbg(uphy->dev, \
-		"TX_A_PRE_EMPH tuning register : 0x%X, "
-		"TX_A_SWING tuning register : 0x%X, "
-		"TX_A_POST_EMPH tuning register : 0x%X\n",
-		(readl_relaxed(phy->base + QSERDES_TXA_PRE_EMPH) & 0x1F),
-		(readl_relaxed(phy->base + QSERDES_TXA_TX_DRV_LVL) & 0x1F),
-		(readl_relaxed(phy->base + QSERDES_TXA_TX_EMP_POST1_LVL) & 0x1F));
-
-	dev_dbg(uphy->dev, \
-		"TX_B_PRE_EMPH tuning register : 0x%X, "
-		"TX_B_SWING tuning register : 0x%X, "
-		"TX_B_POST_EMPH tuning register : 0x%X\n",
-		(readl_relaxed(phy->base + QSERDES_TXB_PRE_EMPH) & 0x1F),
-		(readl_relaxed(phy->base + QSERDES_TXB_TX_DRV_LVL) & 0x1F),
-		(readl_relaxed(phy->base + QSERDES_TXB_TX_EMP_POST1_LVL) & 0x1F));
-
-	dev_dbg(uphy->dev, \
-		"RX_A_EQUALIZATION_GAIN2 tuning register : 0x%X\n",
-		(readl_relaxed(phy->base + RXA_RX_EQU_ADAPTOR_CNTRL4) & 0xF));
-
-	dev_dbg(uphy->dev,\
-		"RX_B_EQUALIZATION_GAIN2 tuning register : 0x%X\n",
-		(readl_relaxed(phy->base + RXB_RX_EQU_ADAPTOR_CNTRL4) & 0xF));
-
-    return 0;
-}
-#endif
 
 static void msm_ssphy_qmp_setmode(struct msm_ssphy_qmp *phy, u32 mode)
 {
@@ -763,7 +749,37 @@ static int msm_ssphy_qmp_init(struct usb_phy *uphy)
 	};
 
 #ifdef CONFIG_LGE_USB_GADGET
-	get_ssphy_tune_regs(uphy);
+        dev_dbg(uphy->dev, "%s, TX_A_PRE_EMPH tuning register: 0x%X,"
+                                " TX_A_SWING tuning register : 0x%X,"
+				" TX_A_POST_EMPH tuning register : 0x%X\n",
+                        __func__,
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXA_PRE_EMPH) & 0x1F),
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXA_TX_DRV_LVL) & 0x1F),
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXA_TX_EMP_POST1_LVL) & 0x1F));
+
+        dev_dbg(uphy->dev, "%s, TX_B_PRE_EMPH tuning register: 0x%X,"
+                                " TX_B_SWING tuning register : 0x%X,",
+				" TX_B_POST_EMPH tuning register : 0x%X\n",
+                        __func__,
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXB_PRE_EMPH) & 0x1F),
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXB_TX_DRV_LVL) & 0x1F),
+                        (readl_relaxed(phy->base +\
+                        QSERDES_TXB_TX_EMP_POST1_LVL) & 0x1F));
+
+        dev_dbg(uphy->dev, "%s, RX_A_EQUALIZATION_GAIN2 tuning register : 0x%X\n",
+                        __func__,
+                        (readl_relaxed(phy->base +\
+                        RXA_RX_EQU_ADAPTOR_CNTRL4) & 0xF));
+
+        dev_dbg(uphy->dev, "%s, RX_B_EQUALIZATION_GAIN2 tuning register : 0x%X\n",
+                        __func__,
+                        (readl_relaxed(phy->base +\
+                        RXB_RX_EQU_ADAPTOR_CNTRL4) & 0xF));
 #endif
 
 	return 0;
@@ -1343,51 +1359,45 @@ static int msm_ssphy_qmp_probe(struct platform_device *pdev)
 	}
 
 #ifdef CONFIG_LGE_USB_GADGET
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-a-pre-emphasis",
-		&phy->tx_a_pre_emphasis);
-	if (ret)
-		phy->tx_a_pre_emphasis = 0;
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-a-pre-emphasis",
+                                                &phy->tx_a_pre_emphasis);
+        if (ret)
+                phy->tx_a_pre_emphasis = 0;
 
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-b-pre-emphasis",
-		&phy->tx_b_pre_emphasis);
-	if (ret)
-		phy->tx_b_pre_emphasis = 0;
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-b-pre-emphasis",
+                                                &phy->tx_b_pre_emphasis);
+        if (ret)
+                phy->tx_b_pre_emphasis = 0;
 
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-a-swing",
-		&phy->tx_a_swing);
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-a-swing",
+                                                &phy->tx_a_swing);
+        if (ret)
+                phy->tx_a_swing = 0;
 
-	if (ret)
-		phy->tx_a_swing = 0;
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-b-swing",
+                                                &phy->tx_b_swing);
+        if (ret)
+                phy->tx_b_swing = 0;
 
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-b-swing",
-		&phy->tx_b_swing);
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-a-post-emphasis",
+                                                &phy->tx_a_post_emphasis);
+        if (ret)
+                phy->tx_a_post_emphasis = 0;
 
-	if (ret)
-		phy->tx_b_swing = 0;
+        ret = of_property_read_u32(dev->of_node, "qcom,tx-b-post-emphasis",
+                                                &phy->tx_b_post_emphasis);
+        if (ret)
+                phy->tx_b_post_emphasis = 0;
 
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-a-post-emphasis",
-		&phy->tx_a_post_emphasis);
+        ret = of_property_read_u32(dev->of_node, "qcom,rx-a-equ_gain2",
+                                                &phy->rx_a_equ_gain2);
+        if (ret)
+                phy->rx_a_equ_gain2 = 0;
 
-	if (ret)
-		phy->tx_a_post_emphasis = 0;
-
-	ret = of_property_read_u32(dev->of_node, "qcom,tx-b-post-emphasis",
-		&phy->tx_b_post_emphasis);
-
-	if (ret)
-		phy->tx_b_post_emphasis = 0;
-
-	ret = of_property_read_u32(dev->of_node, "qcom,rx-a-equ_gain2",
-		&phy->rx_a_equ_gain2);
-
-	if (ret)
-		phy->rx_a_equ_gain2 = 0;
-
-	ret = of_property_read_u32(dev->of_node, "qcom,rx-b-equ_gain2",
-		&phy->rx_b_equ_gain2);
-
-	if (ret)
-		phy->rx_b_equ_gain2 = 0;
+        ret = of_property_read_u32(dev->of_node, "qcom,rx-b-equ_gain2",
+                                                &phy->rx_b_equ_gain2);
+        if (ret)
+                phy->rx_b_equ_gain2 = 0;
 #endif
 
 	/* Set default core voltage values */

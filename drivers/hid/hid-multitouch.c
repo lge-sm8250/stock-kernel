@@ -1368,13 +1368,9 @@ static void mt_touch_report(struct hid_device *hid,
 		case HID_TOUCH_EVENT_PEN_WAKEUP:
 		case HID_TOUCH_EVENT_PEN_WAKEUP_BTN:
 		case HID_TOUCH_EVENT_PEN_DETECTION:
-			TOUCH_I("[%s] send uevent (%s)\n", __func__, touch_status_info_str[*first_usage->gesture]);
-			hid_touch_send_uevent(hid, *first_usage->gesture);
-			*first_usage->gesture = 0;
-			goto skip_input_sync;
-			break;
 		case HID_TOUCH_EVENT_SWITCH_AES_BOTH:
-			break;
+			/* case HID_TOUCH_EVENT_SWITCH_AES_TO_1: -> DS don't send it. */
+			/* case HID_TOUCH_EVENT_SWITCH_AES_TO_2: -> DS don't send it. */
 		case HID_TOUCH_EVENT_UPDATE_STATE:
 			TOUCH_I("[%s] send uevent (%s)\n", __func__, touch_status_info_str[*first_usage->gesture]);
 			hid_touch_send_uevent(hid, *first_usage->gesture);

@@ -10,9 +10,29 @@
  * OVERRIDDEN CALLBACKS *
  ************************/
 
+#define OTG_WLC_VOTER	"OTG_WLC_VOTER"
 int override_vbus_regulator_enable(struct regulator_dev *rdev) {
 	struct smb_charger *chg = rdev_get_drvdata(rdev);
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	union power_supply_propval pval = { .intval = 0, };
 	int ret = 0;
+	int rc = 0;
+
+	if (!chg->wls_psy)
+		chg->wls_psy = power_supply_get_by_name("wireless");
+
+	if (chg->wls_psy)
+		rc = power_supply_get_property(chg->wls_psy, POWER_SUPPLY_PROP_PIN_ENABLED, &pval);
+
+	if (!rc) {
+		if (chg->wls_psy && ext_chg->enable_concurrency_otg_wlc && pval.intval) {
+			pval.intval = DC_RESET_BY_CONCURRENT_ON;
+			power_supply_set_property(chg->wls_psy, POWER_SUPPLY_PROP_DC_RESET, &pval);
+			return ret;
+		}
+	}
+
+	smblib_err(chg, "regulator on\n");
 
 	ret = smblib_vbus_regulator_enable(rdev);
 	wa_control_vbus2_regulator(chg, true);
@@ -22,10 +42,30 @@ int override_vbus_regulator_enable(struct regulator_dev *rdev) {
 
 int override_vbus_regulator_disable(struct regulator_dev *rdev) {
 	struct smb_charger *chg = rdev_get_drvdata(rdev);
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
 	int ret = 0;
+	int rc = 0;
 
-	wa_control_vbus2_regulator(chg, false);
-	ret = smblib_vbus_regulator_disable(rdev);
+	if (ext_chg->enable_concurrency_otg_wlc
+		&& ext_chg->concurrency_otg_wlc) {
+		smblib_err(chg, "boost ic off\n");
+
+		gpiod_set_value(ext_chg->otg_wlc_en_gpio, 0);
+		usleep_range(100, 110);
+		gpiod_set_value(ext_chg->otg_wlc_on_gpio, 0);
+
+		vote(chg->usb_icl_votable, OTG_WLC_VOTER, false, 0);
+		rc = smblib_write(chg, USBIN_ADAPTER_ALLOW_CFG_REG,
+				USBIN_ADAPTER_ALLOW_5V_OR_9V_TO_12V);
+		if (rc < 0) {
+			smblib_err(chg, "Couldn't write to USBIN_ADAPTER_ALLOW_CFG_REG rc=%d\n", rc);
+		}
+	} else {
+		smblib_err(chg, "regulator off\n");
+
+		wa_control_vbus2_regulator(chg, false);
+		ret = smblib_vbus_regulator_disable(rdev);
+	}
 
 	return ret;
 }
@@ -84,9 +124,27 @@ irqreturn_t override_chg_state_change_irq_handler(int irq, void *data)
 	};
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger *chg = irq_data->parent_data;
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
 
 	u8 stat;
 	union power_supply_propval chgstep;
+
+	if (ext_chg->concurrency_otg_wlc) {
+		union power_supply_propval pval = { .intval = 0, };
+		int wlc_vnow = !power_supply_get_property(chg->dc_psy,
+				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval) ? pval.intval : -1;
+
+		if (wlc_vnow < 1000000)
+			wlc_vnow /= 10;
+		else
+			wlc_vnow /= 1000;
+
+		if (!chg->wls_psy)
+			chg->wls_psy = power_supply_get_by_name("wireless");
+
+		if (chg->wls_psy && (wlc_vnow < DCIN_THRESHOLD_MV))
+			vote(chg->dc_suspend_votable, WLC_OTG_VOTER, true, 0);
+	}
 
 	if (smblib_read(chg, BATTERY_CHARGER_STATUS_1_REG, &stat) >=0) {
 		stat &= BATTERY_CHARGER_STATUS_MASK;
@@ -108,6 +166,20 @@ irqreturn_t override_usb_plugin_irq_handler(int irq, void *data)
 	struct smb_charger *chg = irq_data->parent_data;
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
 	irqreturn_t rc = IRQ_NONE;
+	bool vbus_rising;
+	u8 stat;
+	int ret = 0;
+
+	ret = smblib_read(chg, USBIN_BASE + INT_RT_STS_OFFSET, &stat);
+	if (ret < 0) {
+		smblib_err(chg, "Couldn't read INT_RT_STS_OFFSET rc=%d\n", ret);
+	}
+	vbus_rising = (bool)(stat & USBIN_PLUGIN_RT_STS_BIT);
+
+	if (ext_chg->concurrency_otg_wlc) {
+		smblib_dbg(chg, PR_MISC, "Skip plugin irq(%d) handler!\n", vbus_rising);
+		return rc;
+	}
 
 	// Call original here
 	rc = usb_plugin_irq_handler(irq, data);
@@ -121,16 +193,11 @@ irqreturn_t override_usb_source_change_irq_handler(int irq, void *data)
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger *chg = irq_data->parent_data;
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
-	const struct apsd_result *apsd = smblib_get_apsd_result(chg);
 	irqreturn_t rc = IRQ_NONE;
 
 	// Call and return original here
 	rc = usb_source_change_irq_handler(irq, data);
 	schedule_work(&ext_chg->usb_source_change_work);
-	if (apsd->pst == POWER_SUPPLY_TYPE_USB_FLOAT && !chg->pd_active) {
-		vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, USBIN_500MA);
-		vote(chg->usb_icl_votable, USB_PSY_VOTER, false, 0);
-	}
 
 	return rc;
 }
@@ -186,11 +253,12 @@ irqreturn_t override_typec_state_change_irq_handler(int irq, void *data)
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger *chg = irq_data->parent_data;
 	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	union power_supply_propval pval = { .intval = 0, };
 	irqreturn_t rc = IRQ_NONE;
 
 	// Call and return original here
 	rc = typec_state_change_irq_handler(irq, data);
-	schedule_work(&ext_chg->typec_state_change_work);
+	schedule_work(&ext_chg->usb_source_change_work);
 
 	if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE
 			&& chg->real_charger_type != POWER_SUPPLY_TYPE_UNKNOWN
@@ -200,6 +268,16 @@ irqreturn_t override_typec_state_change_irq_handler(int irq, void *data)
 			vote(chg->usb_icl_votable, SW_ICL_MAX_VOTER, true, HVDCP_CURRENT_UA);
 		else
 			smblib_handle_rp_change(chg, chg->typec_mode);
+	}
+
+	if (ext_chg->concurrency_otg_wlc
+		&& chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		override_vbus_regulator_disable(chg->vbus_vreg->rdev);
+		ext_chg->concurrency_otg_wlc = false;
+		if (chg->wls_psy) {
+			pval.intval = DC_RESET_BY_CONCURRENT_OFF;
+			power_supply_set_property(chg->wls_psy, POWER_SUPPLY_PROP_DC_RESET, &pval);
+		}
 	}
 
 	return rc;
@@ -267,12 +345,26 @@ irqreturn_t override_switcher_power_ok_irq_handler(int irq, void *data)
 		{ "Not Used", "battery", "usbin", "dcin" };
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger* chg = irq_data->parent_data;
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
 	union power_supply_propval buf = { 0, };
 	irqreturn_t rc = IRQ_NONE;
 	u8 stat;
 	int ret;
 	int wlc_vnow = !power_supply_get_property(chg->dc_psy,
-		POWER_SUPPLY_PROP_VOLTAGE_NOW, &buf) ? buf.intval/1000 : -1;
+		POWER_SUPPLY_PROP_VOLTAGE_NOW, &buf) ? buf.intval : -1;
+
+	if (wlc_vnow < 1000000)
+		wlc_vnow /= 10;
+	else
+		wlc_vnow /= 1000;
+
+	if (ext_chg->concurrency_otg_wlc) {
+		if (!chg->wls_psy)
+			chg->wls_psy = power_supply_get_by_name("wireless");
+
+		if (chg->wls_psy && (wlc_vnow < DCIN_THRESHOLD_MV))
+			vote(chg->dc_suspend_votable, WLC_OTG_VOTER, true, 0);
+	}
 
 	// Call and return original here
 	rc = switcher_power_ok_irq_handler(irq, data);
@@ -286,6 +378,7 @@ irqreturn_t override_switcher_power_ok_irq_handler(int irq, void *data)
 
 	smblib_dbg(chg, PR_INTERRUPT, "sts=0x%x, %s, vnow=%d\n",
 		stat, str_power_path[((stat>>1)&0x03)], wlc_vnow);
+
 	return rc;
 }
 
@@ -312,11 +405,47 @@ irqreturn_t override_dcin_uv_irq_handler(int irq, void *data)
 {
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger *chg = irq_data->parent_data;
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	union power_supply_propval pval = { 0, };
+	int wlc_vnow = !power_supply_get_property(chg->dc_psy,
+			POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval) ? pval.intval : -1;
 	irqreturn_t rc = IRQ_NONE;
+
+	if (ext_chg->concurrency_otg_wlc) {
+		if (!chg->wls_psy) {
+			chg->wls_psy = power_supply_get_by_name("wireless");
+			if (!chg->wls_psy) {
+				smblib_err(chg, "'wls_psy' is no device\n");
+				return rc;
+			}
+		}
+
+		if (wlc_vnow < 1000000)
+			wlc_vnow /= 10;
+		else
+			wlc_vnow /= 1000;
+
+		if (wlc_vnow < DCIN_THRESHOLD_MV)
+			vote(chg->dc_suspend_votable, WLC_OTG_VOTER, true, 0);
+	}
 
 	wa_dcin_rerun_aicl_clear(chg);
 	rc = dcin_uv_irq_handler(irq, data);
 	wa_dcin_rerun_aicl_trigger(chg);
+
+	if (ext_chg->concurrency_otg_wlc) {
+		if (chg->dcin_uv_count >= 3) {
+			rc = power_supply_get_property(chg->wls_psy, POWER_SUPPLY_PROP_DC_RESET, &pval);
+			if (!rc) { 
+				if (pval.intval & AC_MISSING_DETECTION) {
+					if (chg->dc_reset_votable) {
+						vote(chg->dc_reset_votable, DC_RESET_BY_UV, true, 0);
+						vote(chg->dc_reset_votable, DC_RESET_BY_UV, false, 0);
+					}
+				}
+			}
+		}
+	}
 
 	return rc;
 }
@@ -325,6 +454,7 @@ irqreturn_t override_dc_plugin_irq_handler(int irq, void *data)
 {
 	struct smb_irq_data *irq_data = data;
 	struct smb_charger *chg = irq_data->parent_data;
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
 	union power_supply_propval pval = { 0, };
 	int rc, input_present;
 	bool dcin_present, vbus_present;
@@ -352,6 +482,8 @@ irqreturn_t override_dc_plugin_irq_handler(int irq, void *data)
 	if (!dcin_present) {
 		vote(chg->fcc_votable, WLS_PL_CHARGING_VOTER, false, 0);
 		vote(chg->dc_suspend_votable, CHG_TERMINATION_VOTER, false, 0);
+
+		chg->dcin_aicl_done = false;
 	} else {
 		/* Reset DCIN ICL to 500mA */
 		mutex_lock(&chg->dcin_aicl_lock);
@@ -360,9 +492,27 @@ irqreturn_t override_dc_plugin_irq_handler(int irq, void *data)
 		if (rc < 0)
 			return IRQ_HANDLED;
 
-		vote(chg->fcc_votable, WLS_PL_CHARGING_VOTER, true, 2000000);
+#ifdef CONFIG_CHARGER_IDTP9222_V2
+		vote(chg->fcc_votable, WLS_PL_CHARGING_VOTER, true, 3600000);
+#else
+		vote(chg->fcc_votable, WLS_PL_CHARGING_VOTER, true, 2400000);
+#endif
+		if (chg->sec_cp_present) {
+			/* Not used - Wireless cp charging */
+			rc = smblib_select_sec_charger(chg,
+				POWER_SUPPLY_CHARGER_SEC_NONE,
+				POWER_SUPPLY_CP_NONE, false);
+		}
 		schedule_work(&chg->dcin_aicl_work);
 	}
+
+	/*
+	 * Vote for 1500mA FCC upon WLS detach and remove vote upon attach if
+	 * FCC stepper is enabled.
+	 */
+	if (chg->fcc_stepper_enable && !(vbus_present && !ext_chg->concurrency_otg_wlc))
+		vote(chg->fcc_votable, FCC_STEPPER_VOTER, !dcin_present,
+				dcin_present ? 0 : 1500000);
 
 	if (chg->dc_psy)
 		power_supply_changed(chg->dc_psy);
@@ -381,7 +531,28 @@ irqreturn_t override_dcin_irq_handler(int irq, void *data)
 	if (!strcmp(irq_data->name, "dcin-vashdn"))
 		wa_recovery_vashdn_wireless_trigger(chg);
 
+	if (!strcmp(irq_data->name, "dcin-pon"))
+		wa_avoid_fod_status_trigger(chg);
+
+	if (!strcmp(irq_data->name, "dcin-en"))
+		wa_clear_dc_reverse_volt_v2_en_trigger(chg);
+
+	smblib_dbg(chg, PR_INTERRUPT, "IRQ: %s\n", irq_data->name);
+
 	return IRQ_HANDLED;
+}
+
+void extension_icl_change(struct smb_charger *chg, int settled_ua)
+{
+	struct ext_smb_charger *ext_chg = chg->ext_chg;
+	struct power_supply* veneer = power_supply_get_by_name("veneer");
+	union power_supply_propval aicl = { .intval = settled_ua, };
+
+	ext_chg->settled_ua = settled_ua;
+	if (veneer) {
+		power_supply_set_property(veneer, POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED, &aicl);
+		power_supply_put(veneer);
+	}
 }
 
 void extension_typec_src_removal(struct smb_charger *chg)
@@ -412,7 +583,8 @@ static void usb_plugin_work(struct work_struct *work)
 	vbus = !smblib_get_prop_usb_present(chg, &val) ? !!val.intval : false;
 	raw_notifier_call_chain(&ext_chg->usb_plugin_notifier,
 			vbus, chg);
-
+	if (!vbus)
+		ext_chg->settled_ua = 0;
 }
 
 static void usb_source_change_work(struct work_struct *work)

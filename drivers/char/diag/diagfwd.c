@@ -577,13 +577,13 @@ static int diag_send_data(struct diag_cmd_reg_t *entry, unsigned char *buf,
 		if (((*(unsigned char *)(buf+1)) == 0x16) && ((*(unsigned char *)(buf+2)) == 0x84)) {
 			diag_update_pkt_buffer(buf, len, PKT_TYPE);
 			diag_update_sleeping_process_atd(PKT_TYPE);
+		}
 
-			if (entry->proc == APPS_DATA) {
-				pr_info("%s: forwarding DIAG_NV_WRITE_F to PERIPHERAL_MODEM\n", __func__);
-				return diagfwd_write(0, TYPE_CMD, buf, len); /* PERIPHERAL_MODEM:0 */
-			} else {
-				return diagfwd_write(entry->proc, TYPE_CMD, buf, len);
-			}
+		if (entry->proc == APPS_DATA) {
+			pr_info("%s: forwarding DIAG_NV_WRITE_F to PERIPHERAL_MODEM\n", __func__);
+			return diagfwd_write(0, TYPE_CMD, buf, len); /* PERIPHERAL_MODEM:0 */
+		} else {
+			return diagfwd_write(entry->proc, TYPE_CMD, buf, len);
 		}
 	}
 #endif
@@ -1232,14 +1232,14 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 
 	if (!buf || len <= 0)
 		return -EIO;
-/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
+#ifdef CONFIG_LGE_USB_DIAG_LOCK
+#define DIAG_CMD_BAD_MODE 0x18 // DIAG_BAD_MODE_F 24
+/* [LGE_S][BSP_Modem] LGSSL to enable diag during running LGSSL */
 #ifdef CONFIG_LGE_DM_APP
 	if (driver->logging_mode[DIAG_LOCAL_PROC] != DIAG_MEMORY_DEVICE_MODE)
 	{
 #endif
-/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
-#ifdef CONFIG_LGE_USB_DIAG_LOCK
-#define DIAG_CMD_BAD_MODE 0x18 // DIAG_BAD_MODE_F 24
+/* [LGE_E][BSP_Modem] LGSSL to enable diag during running LGSSL */
 	if (!diag_lock_is_allowed_command(buf)) {
 		pr_err_ratelimited("diag: In %s, Packet not allowed\n",
 				   __func__);
@@ -1247,12 +1247,12 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 		diag_send_rsp(driver->apps_rsp_buf, 1, pid);
 		return 0;
 	}
-#endif /* CONFIG_LGE_USB_DIAG_LOCK */
-/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
+/* [LGE_S][BSP_Modem] LGSSL to enable diag during running LGSSL */
 #ifdef CONFIG_LGE_DM_APP
-		}
+	}
 #endif
-/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
+/* [LGE_E][BSP_Modem] LGSSL to enable diag during running LGSSL */
+#endif /* CONFIG_LGE_USB_DIAG_LOCK */
 
 	/* Check if the command is a supported mask command */
 	mask_ret = diag_process_apps_masks(buf, len, pid);
@@ -1315,6 +1315,17 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 				write_len = diag_send_data(reg_item, buf, len);
 		} else {
 			mutex_unlock(&driver->md_session_lock);
+/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
+#ifdef CONFIG_LGE_DM_APP
+			if (driver->logging_mode[DIAG_LOCAL_PROC] == DIAG_MEMORY_DEVICE_MODE)
+			{
+//				DIAG_LOG("in %s, Testmode cmd on DIAG_MEMORY_DEVICE_MODE(%d)!!", __func__, DIAG_MEMORY_DEVICE_MODE);
+				write_len = diag_send_data(reg_item, buf, len);
+			}
+			else
+			{
+#endif
+/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
 			if (MD_PERIPHERAL_MASK(reg_item->proc) &
 				driver->logging_mask[DIAG_LOCAL_PROC]) {
 				mutex_unlock(&driver->cmd_reg_mutex);
@@ -1322,6 +1333,11 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 				return write_len;
 			}
 			write_len = diag_send_data(reg_item, buf, len);
+/* [LGE_S][BSP_Modem] LGSSL to support testmode cmd */
+#ifdef CONFIG_LGE_DM_APP
+			}
+#endif
+/* [LGE_E][BSP_Modem] LGSSL to support testmode cmd */
 		}
 		mutex_unlock(&driver->cmd_reg_mutex);
 		return write_len;

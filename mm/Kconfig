@@ -876,14 +876,21 @@ config PROCESS_RECLAIM
 
 	 Any other value is ignored.
 
+config FORCE_ALLOC_FROM_DMA_ZONE
+	bool "Force certain memory allocators to always return ZONE_DMA32 memory"
+	depends on ZONE_DMA32
+	help
+	  Ensure certain memory allocators always return memory from ZONE_DMA32.
+	  This option helps ensure that clients who require ZONE_DMA32 memory are
+	  always using ZONE_DMA32 memory.
+
+	  If unsure, say "n".
+
 config CMA_PINPAGE_MIGRATION
 	bool "CMA pinned page migration (EXPERIMENTAL)"
 	default n
 	help
 	  Turns on cma page migration for pinned page.
-
-# LGE_S
-source "mm/Kconfig.lfs"
 
 config MIGRATE_HIGHORDER
 	bool "Enable migrate highorder"
@@ -895,10 +902,10 @@ config MIGRATE_HIGHORDER
 	  This is helpful fragmentation and allocation success rate
 	  that system has too much high order allocation.
 
-config HIGHORDER_PAGES
-	int "Set migrate highorder pool size (pages)"
+config HIGHORDER_PAGES_MID
+	int "Set migrate highorder pool size (pages) for mid size RAM"
 	depends on MIGRATE_HIGHORDER
-	default 0
+	default 153600
 	help
 	  Set the reserved size for migrate highorder.
 	  Normally, android system needs about 10% of total memory.
@@ -906,12 +913,34 @@ config HIGHORDER_PAGES
 	  Please check ION memory usage in your system.
 	  And, set this size about minimum (ION + extra) some memory.
 
-config FORCE_ALLOC_FROM_DMA_ZONE
-	bool "Force certain memory allocators to always return ZONE_DMA32 memory"
-	depends on ZONE_DMA32
+config HIGHORDER_PAGES_HIGH
+	int "Set migrate highorder pool size (pages) for high size RAM"
+	depends on MIGRATE_HIGHORDER
+	default 256000
 	help
-	  Ensure certain memory allocators always return memory from ZONE_DMA32.
-	  This option helps ensure that clients who require ZONE_DMA32 memory are
-	  always using ZONE_DMA32 memory.
+	  Set the reserved size for migrate highorder.
+	  Normally, android system needs about 10% of total memory.
+	  (Thus, reserve 10% of memory if set to 0)
+	  Please check ION memory usage in your system.
+	  And, set this size about minimum (ION + extra) some memory.
 
-	  If unsure, say "n".
+config HIGHORDER_PAGES_THRESHOLD
+	int "Set migrate highorder threshold"
+	depends on MIGRATE_HIGHORDER
+	default 6291456
+	help
+	  Set the reserved size for migrate highorder.
+	  Normally, android system needs about 10% of total memory.
+	  (Thus, reserve 10% of memory if set to 0)
+	  Please check ION memory usage in your system.
+	  And, set this size about minimum (ION + extra) some memory.
+
+config SCAN_BALANCE_COUNT
+	bool "Enable scan balance count"
+	default n
+	help
+	  This option enables scan balance count.
+	  It will help to monitor scan balance with
+	  nr_scan_equal, nr_scan_fract, nr_scan_anon, nr_scan_file.
+
+source "mm/Kconfig.lfs"

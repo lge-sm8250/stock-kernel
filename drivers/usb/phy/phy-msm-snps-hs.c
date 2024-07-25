@@ -21,10 +21,6 @@
 #include <linux/reset.h>
 #include <linux/debugfs.h>
 
-#ifdef CONFIG_LGE_DUAL_SCREEN
-#include <linux/lge_ds3.h>
-#endif
-
 #define USB2_PHY_USB_PHY_UTMI_CTRL0		(0x3c)
 #define OPMODE_MASK				(0x3 << 3)
 #define OPMODE_NONDRIVING			(0x1 << 3)
@@ -145,10 +141,6 @@ struct msm_hsphy {
 #ifdef CONFIG_LGE_USB
 	uint32_t		qusb2phy_tune[4];
 	uint32_t		qusb2phy_tune_host[4];
-#endif
-#ifdef CONFIG_LGE_DUAL_SCREEN
-	uint32_t		qusb2phy_tune_ds[4];
-	bool			param_override_by_ds;
 #endif
 };
 
@@ -362,22 +354,6 @@ static void hsusb_phy_tune_init(struct msm_hsphy *phy)
 	uint32_t aseq[10];
 	bool is_dts = 0;
 
-#ifdef CONFIG_LGE_DUAL_SCREEN
-	if (check_ds_connect_state() >= DS_STATE_HPD_ENABLED) {
-		is_dts = true;
-
-		if (is_dts) {
-			tune = phy->qusb2phy_tune_ds;
-			phy->param_override_by_ds = true;
-			sprintf(override_phy_tune,"0x%02x,0x%02x,0x%02x,0x%02x",
-					tune[0],tune[1],tune[2],tune[3]);
-		}
-	} else {
-		if (phy->param_override_by_ds) {
-			override_phy_tune[0] = '\0';
-			phy->param_override_by_ds = false;
-		}
-#endif
 	if (strlen(override_phy_tune) > 0) {
 		get_options(override_phy_tune, ARRAY_SIZE(aseq), aseq);
 		if (aseq[0] < 4) {
@@ -399,9 +375,6 @@ static void hsusb_phy_tune_init(struct msm_hsphy *phy)
 		sprintf(override_phy_tune,"0x%02x,0x%02x,0x%02x,0x%02x",
 				tune[0],tune[1],tune[2],tune[3]);
 	}
-#ifdef CONFIG_LGE_DUAL_SCREEN
-	}
-#endif
 
 	/*
 		Parameters sequence :
@@ -1045,18 +1018,6 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 	} else {
 		memset(phy->qusb2phy_tune_host, 0,
 				sizeof(phy->qusb2phy_tune_host));
-	}
-#endif
-
-#ifdef CONFIG_LGE_DUAL_SCREEN
-	of_get_property(dev->of_node, "qcom,hsusb-phy-tune-ds", &ret);
-	if (ret > 0) {
-		of_property_read_u32_array(dev->of_node, "qcom,hsusb-phy-tune-ds",
-				phy->qusb2phy_tune_ds,
-				ret/sizeof(u32));
-	} else {
-		memset(phy->qusb2phy_tune_ds, 0,
-				sizeof(phy->qusb2phy_tune_ds));
 	}
 #endif
 

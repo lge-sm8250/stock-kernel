@@ -14,8 +14,10 @@
 
 extern void bob_mode_enable(void);
 extern void bob_mode_disable(void);
-#ifdef CONFIG_MACH_KONA_TIMELM
+#if defined(CONFIG_MACH_KONA_TIMELM) || defined(CONFIG_MACH_LITO_CAYMANLM) || defined(CONFIG_MACH_LITO_WINGLM)
 bool isEnable;
 #endif
 
+
 #endif
+

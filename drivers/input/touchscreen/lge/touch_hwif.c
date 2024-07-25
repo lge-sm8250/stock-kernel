@@ -253,11 +253,13 @@ int touch_bus_xfer(struct device *dev, struct touch_xfer_msg *xfer)
 
 void touch_enable_irq_wake(unsigned int irq)
 {
+	TOUCH_TRACE();
 	enable_irq_wake(irq);
 }
 
 void touch_disable_irq_wake(unsigned int irq)
 {
+	TOUCH_TRACE();
 	disable_irq_wake(irq);
 }
 
@@ -315,8 +317,8 @@ int touch_check_irq(unsigned int irq, struct device *dev)
 		TOUCH_I("irq is not connected");
 		return -EPERM;
 	}
-
 	action = desc->action;
+
 	if (action == NULL) {
 		TOUCH_I("irq is not connected");
 		return -EPERM;

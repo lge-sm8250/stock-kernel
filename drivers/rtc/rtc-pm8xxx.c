@@ -26,9 +26,6 @@
 
 #define NUM_8_BIT_RTC_REGS		0x4
 
-#define TO_SECS(arr)		(arr[0] | (arr[1] << 8) | (arr[2] << 16) | \
-							((unsigned long)arr[3] << 24))
-
 /**
  * struct pm8xxx_rtc_regs - describe RTC registers per PMIC versions
  * @ctrl: base address of control register
@@ -69,6 +66,10 @@ struct pm8xxx_rtc {
 	spinlock_t ctrl_reg_lock;
 };
 
+#ifdef CONFIG_LGE_RTC_START_YEAR
+static unsigned long rtc_offset_secs;
+#endif
+
 /*
  * Steps to write the RTC registers.
  * 1. Disable alarm if enabled.
@@ -91,6 +92,10 @@ static int pm8xxx_rtc_set_time(struct device *dev, struct rtc_time *tm)
 		return -EACCES;
 
 	rtc_tm_to_time(tm, &secs);
+
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	secs -= rtc_offset_secs;
+#endif
 
 	dev_dbg(dev, "Seconds value to be written to RTC = %lu\n", secs);
 
@@ -211,19 +216,18 @@ static int pm8xxx_rtc_read_time(struct device *dev, struct rtc_time *tm)
 		}
 	}
 
-	secs = TO_SECS(value);
+	secs = value[0] | (value[1] << 8) | (value[2] << 16) |
+	       ((unsigned long)value[3] << 24);
+
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	secs = rtc_offset_secs + secs;
+#endif
 
 	rtc_time_to_tm(secs, tm);
 
-#ifdef CONFIG_LGE_PM_DEBUG
-	dev_err(dev, "secs = %lu, h:m:s == %d:%d:%d, d/m/y = %d/%d/%d\n",
-		secs, tm->tm_hour, tm->tm_min, tm->tm_sec,
-		tm->tm_mday, tm->tm_mon, tm->tm_year);
-#else
 	dev_dbg(dev, "secs = %lu, h:m:s == %d:%d:%d, d/m/y = %d/%d/%d\n",
 		secs, tm->tm_hour, tm->tm_min, tm->tm_sec,
 		tm->tm_mday, tm->tm_mon, tm->tm_year);
-#endif
 
 	return 0;
 }
@@ -238,6 +242,10 @@ static int pm8xxx_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
 
 	rtc_tm_to_time(&alarm->time, &secs);
+
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	secs -= rtc_offset_secs;
+#endif
 
 	for (i = 0; i < NUM_8_BIT_RTC_REGS; i++) {
 		value[i] = secs & 0xFF;
@@ -268,17 +276,10 @@ static int pm8xxx_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 		goto rtc_rw_fail;
 	}
 
-#ifdef CONFIG_LGE_PM_DEBUG
-	dev_err(dev, "Alarm Set for h:r:s=%d:%d:%d, d/m/y=%d/%d/%d\n",
-		alarm->time.tm_hour, alarm->time.tm_min,
-		alarm->time.tm_sec, alarm->time.tm_mday,
-		alarm->time.tm_mon, alarm->time.tm_year);
-#else
 	dev_dbg(dev, "Alarm Set for h:r:s=%d:%d:%d, d/m/y=%d/%d/%d\n",
 		alarm->time.tm_hour, alarm->time.tm_min,
 		alarm->time.tm_sec, alarm->time.tm_mday,
 		alarm->time.tm_mon, alarm->time.tm_year);
-#endif
 rtc_rw_fail:
 	spin_unlock_irqrestore(&rtc_dd->ctrl_reg_lock, irq_flags);
 	return rc;
@@ -299,7 +300,12 @@ static int pm8xxx_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 		return rc;
 	}
 
-	secs = TO_SECS(value);
+	secs = value[0] | (value[1] << 8) | (value[2] << 16) |
+	       ((unsigned long)value[3] << 24);
+
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	secs = rtc_offset_secs + secs;
+#endif
 
 	rtc_time_to_tm(secs, &alarm->time);
 
@@ -513,6 +519,10 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
 	int rc;
 	struct pm8xxx_rtc *rtc_dd;
 	const struct of_device_id *match;
+
+#ifdef CONFIG_LGE_RTC_START_YEAR
+	rtc_offset_secs = mktime(CONFIG_LGE_RTC_START_YEAR, 1, 1, 0, 0, 0);
+#endif
 
 	match = of_match_node(pm8xxx_id_table, pdev->dev.of_node);
 	if (!match)

@@ -139,7 +139,6 @@ struct dp_display {
 			bool wakeup);
 	int (*get_display_type)(struct dp_display *dp_display,
 			const char **display_type);
-
 #ifdef CONFIG_LGE_DISPLAY_COMMON
 	struct lge_dp_display lge_dp;
 #endif

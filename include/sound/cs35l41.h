@@ -35,6 +35,8 @@ struct cs35l41_platform_data {
 	bool right_channel;
 	bool amp_gain_zc;
 	bool ng_enable;
+	bool tuning_has_prefix;
+	bool fwname_use_revid;
 	int bst_ind;
 	int bst_vctrl;
 	int bst_ipk;
@@ -50,7 +52,6 @@ struct cs35l41_platform_data {
 
 struct cs35l41_private {
 	struct wm_adsp dsp; /* needs to be first member */
-	struct snd_soc_codec *codec;
 	struct cs35l41_platform_data pdata;
 	struct device *dev;
 	struct regmap *regmap;
@@ -61,6 +62,8 @@ struct cs35l41_private {
 	int extclk_freq;
 	int extclk_cfg;
 	int sclk;
+	int amp_mute;
+	int pcm_vol;
 	bool reload_tuning;
 	bool dspa_mode;
 	bool i2s_mode;

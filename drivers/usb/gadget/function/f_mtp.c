@@ -56,7 +56,11 @@
 #endif
 
 #define MTP_RX_BUFFER_INIT_SIZE    1048576
+#ifdef CONFIG_LGE_USB_GADGET
+#define MTP_TX_BUFFER_INIT_SIZE    196608
+#else
 #define MTP_TX_BUFFER_INIT_SIZE    1048576
+#endif
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
 #define MAX_INST_NAME_LEN          40

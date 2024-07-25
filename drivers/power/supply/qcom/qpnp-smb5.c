@@ -26,8 +26,44 @@
 #include "smb5-reg.h"
 #include "smb5-lib.h"
 #include "schgm-flash.h"
-#ifdef CONFIG_LGE_USB_MOISTURE_DETECTION
+#if defined(CONFIG_LGE_USB_MOISTURE_DETECTION) || defined(CONFIG_MACH_LITO_ACELM)
 #include <soc/qcom/lge/board_lge.h>
+#endif
+
+#ifdef CONFIG_MACH_LITO_ACELM
+static bool lge_disable_smb1390(void)
+{
+	if ((lge_get_sku_carrier() == HW_SKU_KR) &&
+		(lge_get_board_rev_no() > HW_REV_C ) ){
+		return true;
+	}
+
+	if ((lge_get_sku_carrier() == HW_SKU_GLOBAL     ||
+		 lge_get_sku_carrier() == HW_SKU_GLOBAL_MEA ||
+		 lge_get_sku_carrier() == HW_SKU_AU_OPEN    ||
+		 lge_get_sku_carrier() == HW_SKU_AU_TEL     ||
+		 lge_get_sku_carrier() == HW_SKU_GLOBAL_CERT) &&
+		(lge_get_board_rev_no() < HW_REV_1_0) ){
+		return true;
+	}
+
+	if (lge_get_laop_operator() == OP_OPEN_KR ||
+		lge_get_laop_operator() == OP_SKT_KR  ||
+		lge_get_laop_operator() == OP_KT_KR   ||
+		lge_get_laop_operator() == OP_LGU_KR  ){
+		return true;
+	}
+
+	/*
+	if (lge_get_sku_carrier() == HW_SKU_KR     ||
+		lge_get_sku_carrier() == HW_SKU_KR_LGU ||
+		lge_get_sku_carrier() == HW_SKU_KR_SKT ||
+		lge_get_sku_carrier() == HW_SKU_KR_KT  ){
+		return true;
+	}
+	*/
+	return false;
+}
 #endif
 
 static struct smb_params smb5_pmi632_params = {
@@ -542,6 +578,12 @@ static int smb5_parse_dt_misc(struct smb5 *chip, struct device_node *node)
 
 	of_property_read_u32(node, "qcom,sec-charger-config",
 					&chip->dt.sec_charger_config);
+
+#ifdef CONFIG_MACH_LITO_ACELM
+	if (lge_disable_smb1390() == true) {
+		chip->dt.sec_charger_config = POWER_SUPPLY_CHARGER_SEC_NONE;
+	}
+#endif
 	chg->sec_cp_present =
 		chip->dt.sec_charger_config == POWER_SUPPLY_CHARGER_SEC_CP ||
 		chip->dt.sec_charger_config == POWER_SUPPLY_CHARGER_SEC_CP_PL;
@@ -1682,7 +1724,6 @@ static int smb5_usb_main_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_FORCE_MAIN_ICL:
 		vote_override(chg->usb_icl_votable, CC_MODE_VOTER,
 				(val->intval < 0) ? false : true, val->intval);
-
 		/* Main ICL updated re-calculate ILIM */
 		if (real_chg_type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
 			real_chg_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5)
@@ -2018,11 +2059,16 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 				POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+#ifdef CONFIG_LGE_PM
+		val->intval = get_client_vote(chg->fv_votable,
+					      BATT_PROFILE_VOTER);
+#else
 		val->intval = get_client_vote(chg->fv_votable,
 					      QNOVO_VOTER);
 		if (val->intval < 0)
 			val->intval = get_client_vote(chg->fv_votable,
 						      BATT_PROFILE_VOTER);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_QNOVO:
 		val->intval = get_client_vote_locked(chg->fv_votable,
@@ -2156,20 +2202,19 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 		vote(chg->fv_votable, BATT_PROFILE_VOTER, true, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_QNOVO:
-		if (val->intval == -EINVAL) {
 #ifdef CONFIG_LGE_PM
+		vote(chg->fv_votable, QNOVO_VOTER, (val->intval >= 0),
+				val->intval);
 #else
+		if (val->intval == -EINVAL) {
 			vote(chg->fv_votable, BATT_PROFILE_VOTER, true,
 					chg->batt_profile_fv_uv);
-#endif
 			vote(chg->fv_votable, QNOVO_VOTER, false, 0);
 		} else {
 			vote(chg->fv_votable, QNOVO_VOTER, true, val->intval);
-#ifdef CONFIG_LGE_PM
-#else
 			vote(chg->fv_votable, BATT_PROFILE_VOTER, false, 0);
-#endif
 		}
+#endif
 		break;
 	case POWER_SUPPLY_PROP_STEP_CHARGING_ENABLED:
 		chg->step_chg_enabled = !!val->intval;
@@ -2179,24 +2224,15 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 		vote(chg->fcc_votable, BATT_PROFILE_VOTER, true, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_QNOVO:
-#ifdef CONFIG_LGE_PM
-#else
 		vote(chg->pl_disable_votable, PL_QNOVO_VOTER,
 			val->intval != -EINVAL && val->intval < 2000000, 0);
-#endif
 		if (val->intval == -EINVAL) {
-#ifdef CONFIG_LGE_PM
-#else
 			vote(chg->fcc_votable, BATT_PROFILE_VOTER,
 					true, chg->batt_profile_fcc_ua);
-#endif
 			vote(chg->fcc_votable, QNOVO_VOTER, false, 0);
 		} else {
 			vote(chg->fcc_votable, QNOVO_VOTER, true, val->intval);
-#ifdef CONFIG_LGE_PM
-#else
 			vote(chg->fcc_votable, BATT_PROFILE_VOTER, false, 0);
-#endif
 		}
 		break;
 	case POWER_SUPPLY_PROP_SET_SHIP_MODE:
@@ -2428,7 +2464,7 @@ static int smb5_configure_typec(struct smb_charger *chg)
 	 * the legacy detection logic by enabling/disabling the typeC mode.
 	 */
 #ifdef CONFIG_LGE_PM
-        if (chg->pd_not_supported && (val & TYPEC_LEGACY_CABLE_STATUS_BIT)) {
+	if (chg->pd_not_supported && (val & TYPEC_LEGACY_CABLE_STATUS_BIT)) {
 #else
 	if (val & TYPEC_LEGACY_CABLE_STATUS_BIT) {
 #endif
@@ -2481,8 +2517,13 @@ static int smb5_configure_typec(struct smb_charger *chg)
 
 	val = chg->lpd_disabled ? 0 : TYPEC_WATER_DETECTION_INT_EN_BIT;
 	/* Use simple write to enable only required interrupts */
+#ifdef CONFIG_LGE_PM
+	// Disable TYPEC_SRC_BATT_HPWR_INT_EN_BIT for preventing OTG interrupt storm
+	rc = smblib_write(chg, TYPE_C_INTERRUPT_EN_CFG_2_REG, val);
+#else
 	rc = smblib_write(chg, TYPE_C_INTERRUPT_EN_CFG_2_REG,
 				TYPEC_SRC_BATT_HPWR_INT_EN_BIT | val);
+#endif
 	if (rc < 0) {
 		dev_err(chg->dev,
 			"Couldn't configure Type-C interrupts rc=%d\n", rc);
@@ -2495,7 +2536,8 @@ static int smb5_configure_typec(struct smb_charger *chg)
 				EN_TRY_SNK_BIT);
 	if (rc < 0) {
 		dev_err(chg->dev,
-			"Couldn't configure TYPE_C_MODE_CFG_REG rc=%d\n", rc);
+			"Couldn't configure TYPE_C_MODE_CFG_REG rc=%d\n",
+				rc);
 		return rc;
 	}
 	chg->typec_try_mode |= EN_TRY_SNK_BIT;
@@ -2547,25 +2589,12 @@ static int smb5_configure_typec(struct smb_charger *chg)
 			"Couldn't configure CC threshold voltage rc=%d\n", rc);
 
 #ifdef CONFIG_LGE_USB
-#define TYPE_C_CFG (USBIN_BASE + 0x58)
-#define BC1P2_START_ON_CC_BIT BIT(7)
-	/* BC1P2 starts after vbus deglitch */
-	rc = smblib_masked_write(chg, TYPE_C_CFG, BC1P2_START_ON_CC_BIT, 0);
+	/* Set initial setting time for SNK/SRC crude sensor to 1.2ms. */
+	rc = smblib_masked_write(chg, TYPE_C_CRUDE_SENSOR_CFG_REG,
+				 SNK_SRC_CRUDE_CC_SETTLE_SEL_BIT,
+				 SNK_SRC_CRUDE_CC_SETTLE_SEL_BIT);
 	if (rc < 0) {
-		dev_err(chg->dev,
-			"Couldn't configure BC1P2_START_ON_CC rc=%d\n", rc);
-		return rc;
-	}
-
-	/*
-	 * Do not check for VBUS at vSAFE0V before transitioning into
-	 * ATTACHED.SRC state
-	 */
-	rc = smblib_masked_write(chg, TYPE_C_EXIT_STATE_CFG_REG,
-		BYPASS_VSAFE0V_DURING_ROLE_SWAP_BIT,
-		BYPASS_VSAFE0V_DURING_ROLE_SWAP_BIT);
-	if (rc < 0) {
-		dev_err(chg->dev, "Couldn't set EXIT_STATE cfg rc=%d\n", rc);
+		dev_err(chg->dev, "Couldn't set CRUDE_SENSOR cfg rc=%d\n", rc);
 		return rc;
 	}
 #endif
@@ -2644,6 +2673,9 @@ static int smb5_configure_iterm_thresholds_adc(struct smb5 *chip)
 	else
 		max_limit_ma = ITERM_LIMITS_PM8150B_MA;
 
+	pr_err("iterm_hi=%d,iterm_lo=%d \n"
+		,chip->dt.term_current_thresh_hi_ma
+		,chip->dt.term_current_thresh_lo_ma);
 	if (chip->dt.term_current_thresh_hi_ma < (-1 * max_limit_ma)
 		|| chip->dt.term_current_thresh_hi_ma > max_limit_ma
 		|| chip->dt.term_current_thresh_lo_ma < (-1 * max_limit_ma)
@@ -3322,11 +3354,12 @@ static int smb5_determine_initial_status(struct smb5 *chip)
 	extension_smb5_determine_initial_status(chg, &irq_data);
 #else
 	usb_plugin_irq_handler(0, &irq_data);
-	chg_state_change_irq_handler(0, &irq_data);
 	usb_source_change_irq_handler(0, &irq_data);
 	dc_plugin_irq_handler(0, &irq_data);
 	typec_attach_detach_irq_handler(0, &irq_data);
 	typec_state_change_irq_handler(0, &irq_data);
+	usb_source_change_irq_handler(0, &irq_data);
+	chg_state_change_irq_handler(0, &irq_data);
 	icl_change_irq_handler(0, &irq_data);
 	batt_temp_changed_irq_handler(0, &irq_data);
 	wdog_bark_irq_handler(0, &irq_data);
@@ -3533,11 +3566,19 @@ static struct smb_irq_info smb5_irqs[] = {
 	},
 	[DCIN_PON_IRQ] = {
 		.name		= "dcin-pon",
+#ifdef CONFIG_LGE_PM
+		.handler	= override_dcin_irq_handler,
+#else
 		.handler	= default_irq_handler,
+#endif
 	},
 	[DCIN_EN_IRQ] = {
 		.name		= "dcin-en",
+#ifdef CONFIG_LGE_PM
+		.handler	= override_dcin_irq_handler,
+#else
 		.handler	= default_irq_handler,
+#endif
 	},
 	/* TYPEC IRQs */
 	[TYPEC_OR_RID_DETECTION_CHANGE_IRQ] = {
@@ -3592,7 +3633,9 @@ static struct smb_irq_info smb5_irqs[] = {
 	[WDOG_SNARL_IRQ] = {
 		.name		= "wdog-snarl",
 		.handler	= wdog_snarl_irq_handler,
-#ifndef CONFIG_LGE_PM
+#ifdef CONFIG_LGE_PM
+		.wake		= false,
+#else
 		.wake		= true,
 #endif
 	},
@@ -3985,7 +4028,7 @@ static int smb5_probe(struct platform_device *pdev)
 #if defined(CONFIG_LGE_USB_MOISTURE_DETECTION) \
 	&& defined(CONFIG_LGE_USB_SBU_SWITCH)
 	chg->sbu_desc.flags = LGE_SBU_SWITCH_FLAG_SBU_DISABLE |
-		LGE_SBU_SWITCH_FLAG_SBU_MD_ING | LGE_SBU_SWITCH_FLAG_SBU_UART;
+		LGE_SBU_SWITCH_FLAG_SBU_MD_ING;
 	chg->sbu_inst = devm_lge_sbu_switch_instance_register(chg->dev,
 							      &chg->sbu_desc);
 	if (IS_ERR_OR_NULL(chg->sbu_inst)) {
@@ -3994,7 +4037,29 @@ static int smb5_probe(struct platform_device *pdev)
 		return PTR_ERR(chg->sbu_inst);
 	}
 #endif
-
+#if defined(CONFIG_CHARGER_IDTP9222) || defined(CONFIG_CHARGER_IDTP9222_V2)
+	/* location : earlier than smblib_init (work, irq initialization) */
+	chg->dc_icl_votable = find_votable("DC_ICL");
+	if (!chg->dc_icl_votable) {
+		rc = -EPROBE_DEFER;
+		pr_err("Couldn't find_votable DC_ICL, rc=%d\n", rc);
+		return rc;
+	}
+#if defined(CONFIG_CHARGER_IDTP9222_V2)
+	chg->dc_reset_votable = find_votable("DC_RESET");
+	if (!chg->dc_reset_votable) {
+		rc = -EPROBE_DEFER;
+		pr_err("Couldn't find_votable DC_RESET, rc=%d\n", rc);
+		return rc;
+	}
+#endif
+	chg->wls_psy = power_supply_get_by_name("wireless");
+	if (!chg->wls_psy) {
+		rc = -EPROBE_DEFER;
+		pr_err("Couldn't get wls_psy, rc=%d\n", rc);
+		return rc;
+	}
+#endif
 	rc = smblib_init(chg);
 	if (rc < 0) {
 		pr_err("Smblib_init failed rc=%d\n", rc);
@@ -4170,7 +4235,6 @@ static int smb5_probe(struct platform_device *pdev)
 #else
 	__lpd_ux = true;
 #endif
-
 	pr_info("QPNP SMB5 probed successfully\n");
 
 	return rc;
@@ -4212,16 +4276,6 @@ static void smb5_shutdown(struct platform_device *pdev)
 
 	/* disable all interrupts */
 	smb5_disable_interrupts(chg);
-
-#ifdef CONFIG_LGE_PM
-	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_PD) {
-		smblib_masked_write(chg, TYPE_C_MODE_CFG_REG,
-				TYPEC_POWER_ROLE_CMD_MASK, 0);
-		msleep(100);
-	}
-	smblib_write(chg, USBIN_ADAPTER_ALLOW_CFG_REG,
-			USBIN_ADAPTER_ALLOW_5V_TO_9V);
-#endif
 
 	/* disable the SMB_EN configuration */
 	smblib_masked_write(chg, MISC_SMB_EN_CMD_REG, EN_CP_CMD_BIT, 0);

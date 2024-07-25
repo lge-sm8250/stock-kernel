@@ -1,12 +1,13 @@
 #define pr_fmt(fmt)	"[Display][DP:%s:%d] " fmt, __func__, __LINE__
 
-#ifdef CONFIG_LGE_DISPLAY_NOT_SUPPORT_DISPLAYPORT
+#if IS_ENABLED(CONFIG_LGE_DISPLAY_NOT_SUPPORT_DISPLAYPORT)
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include "lge_dp.h"
 #include <linux/err.h>
+#include <linux/kdev_t.h>
 
 struct class *dp_noti_class;
 
@@ -39,6 +40,16 @@ void dp_noti_set_state(struct dp_noti_dev *ndev, int state)
 void lge_dp_set_id(unsigned int id) {
 	pr_debug("not supported\n");
 	return;
+}
+
+void lge_dp_drv_init(struct dp_display *dp_display)
+{
+	pr_debug("not supported\n");
+}
+
+void lge_set_dp_hpd(struct dp_display *dp_display, int value)
+{
+	pr_debug("not supported\n");
 }
 
 static int create_dp_noti_class(void)
@@ -104,6 +115,9 @@ module_exit(dp_noti_class_exit);
 #include "lge_dp.h"
 #include "lge_dp_def.h"
 #include "dp_display.h"
+#if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
+#include "../cover/lge_cover_panel.h"
+#endif /* CONFIG_LGE_DUAL_SCREEN */
 
 extern struct lge_dp_display* get_lge_dp(void);
 
@@ -188,12 +202,14 @@ static void lge_dp_create_sysfs(struct dp_display *dp_display)
 			}
 		}
 	}
-
 }
 
 void lge_dp_drv_init(struct dp_display *dp_display)
 {
 	lge_dp_create_sysfs(dp_display);
+#if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
+	lge_cover_create_sysfs();
+#endif /* CONFIG_LGE_DUAL_SCREEN */
 }
 
 void lge_set_dp_hpd(struct dp_display *dp_display, int value)

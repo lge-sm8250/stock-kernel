@@ -49,7 +49,19 @@ menuconfig LGE_TOUCH_LGSIC_SW42902
         bool "LGE Touch Core ODM Device Driver - SW42902"
         depends on LGE_TOUCH_CORE_BASE
         help
-          If your device is sw442902, say Y
+          If your device is sw42902, say Y
+
+menuconfig LGE_TOUCH_LGSIC_SW42902_WING
+        bool "LGE Touch Core ODM Device Driver - SW42902"
+        depends on LGE_TOUCH_CORE_BASE
+        help
+          If your device is sw42902, say Y
+
+menuconfig LGE_TOUCH_LGSIC_SW49107
+        bool "LGE Touch Core ODM Device Driver - SW49107"
+        depends on LGE_TOUCH_CORE_BASE
+        help
+          If your device is sw49107, say Y
 
 # To Do : LGSIC Chipseet
 endif

@@ -1,5 +1,4 @@
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
-ifneq ($(CONFIG_MACH_LGE), y)
         dtbo-$(CONFIG_ARCH_KONA) += \
                 kona-cdp-overlay.dtbo \
                 kona-cdp-lcd-overlay.dtbo \
@@ -30,14 +29,7 @@ kona-xrfusion-ult-overlay.dtbo-base := kona.dtb kona-v2.dtb kona-v2.1.dtb
 kona-arglass-overlay.dtbo-base := kona.dtb kona-v2.dtb kona-v2.1.dtb
 kona-xrsku4-overlay.dtbo-base := kona.dtb kona-v2.dtb kona-v2.1.dtb
 kona-hdk-overlay.dtbo-base := kona.dtb kona-v2.dtb kona-v2.1.dtb
-else #CONFIG_MACH_LGE
-	dtb-$(CONFIG_ARCH_KONA) += \
-		kona.dtb \
-		kona-v2.dtb \
-		kona-v2.1.dtb
-endif
 else
-ifneq ($(CONFIG_MACH_LGE), y)
 dtb-$(CONFIG_ARCH_KONA) += kona-rumi.dtb \
         kona-mtp.dtb \
         kona-mtp-ws.dtb \
@@ -79,15 +71,11 @@ dtb-$(CONFIG_ARCH_KONA) += kona-rumi.dtb \
         kona-v2.1-iot-rb5.dtb \
         kona-7230-iot-rb5.dtb \
         kona-7230m-iot-rb5.dtb
-else #CONFIG_MACH_LGE
-	dtb-$(CONFIG_ARCH_KONA) += \
-		kona.dtb \
-		kona-v2.dtb \
-		kona-v2.1.dtb
-endif
+
 endif
 
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
+ifneq ($(CONFIG_MACH_LGE), y)
 dtbo-$(CONFIG_ARCH_LITO) += lito-rumi-overlay.dtbo \
                 lito-mtp-overlay.dtbo \
                 lito-v2-mtp-overlay.dtbo \
@@ -117,6 +105,10 @@ litomagnus-mtp-overlay.dtbo-base := litomagnus.dtb
 litomagnus-cdp-overlay.dtbo-base := litomagnus.dtb
 orchid-mtp-overlay.dtbo-base := orchid.dtb
 orchid-cdp-overlay.dtbo-base := orchid.dtb
+else #CONFIG_MACH_LGE
+dtb-$(CONFIG_ARCH_LITO) += lito-mtp.dtb \
+                lito-v2-mtp.dtb
+endif
 else
 dtb-$(CONFIG_ARCH_LITO) += lito-rumi.dtb \
                 lito-mtp.dtb \

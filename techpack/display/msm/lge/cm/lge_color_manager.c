@@ -57,6 +57,7 @@ static ssize_t daylight_mode_set(struct device *dev,
 
 	return ret;
 }
+
 static DEVICE_ATTR(daylight_mode, S_IRUGO | S_IWUSR | S_IWGRP,
 		daylight_mode_get, daylight_mode_set);
 
@@ -612,6 +613,51 @@ static ssize_t video_enhancement_set(struct device *dev,
 static DEVICE_ATTR(video_enhancement, S_IRUGO | S_IWUSR | S_IWGRP,
 					video_enhancement_get, video_enhancement_set);
 
+static ssize_t ecc_status_get(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_panel *panel;
+	int len = 0;
+
+	panel = dev_get_drvdata(dev);
+	if (!panel) {
+		pr_err("panel is NULL\n");
+		return len;
+	}
+	if (panel == NULL) {
+		pr_err("Invalid input\n");
+		return -EINVAL;
+	}
+
+	return sprintf(buf, "%d\n", panel->lge.ecc_status);
+}
+
+static ssize_t ecc_status_set(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	ssize_t ret = strnlen(buf, PAGE_SIZE);
+	struct dsi_panel *panel;
+	int input;
+
+	panel = dev_get_drvdata(dev);
+
+	if (panel == NULL) {
+		pr_err("Invalid input\n");
+		return -EINVAL;
+	}
+
+	sscanf(buf, "%d", &input);
+
+	panel->lge.ecc_status = input;
+
+	if (panel->lge.ddic_ops && panel->lge.ddic_ops->lge_set_ecc_status)
+		panel->lge.ddic_ops->lge_set_ecc_status(panel, panel->lge.ecc_status);
+
+	return ret;
+}
+static DEVICE_ATTR(ecc_status, S_IRUGO | S_IWUSR | S_IWGRP,
+					ecc_status_get, ecc_status_set);
+
 void lge_mdss_dsi_bc_dim_work(struct work_struct *work)
 {
 	struct lge_dsi_panel *lge_panel = NULL;
@@ -813,46 +859,68 @@ static ssize_t true_view_set(struct device *dev,
 }
 static DEVICE_ATTR(true_view, S_IRUGO | S_IWUSR | S_IWGRP, true_view_get, true_view_set);
 
+static struct attribute *color_manager_attrs[] = {
+	&dev_attr_daylight_mode.attr,
+	&dev_attr_hdr_mode.attr,
+	&dev_attr_sharpness.attr,
+	&dev_attr_screen_mode.attr,
+	&dev_attr_screen_tune.attr,
+	&dev_attr_rgb_tune.attr,
+	&dev_attr_color_manager_status.attr,
+	&dev_attr_color_manager_mode.attr,
+	&dev_attr_hdr_hbm_lut.attr,
+	&dev_attr_acl_mode.attr,
+	&dev_attr_video_enhancement.attr,
+	&dev_attr_ecc_status.attr,
+	&dev_attr_therm_dim.attr,
+	&dev_attr_brightness_dim.attr,
+	NULL,
+};
+
+static struct attribute *vr_attrs[] = {
+	&dev_attr_vr_low_persist.attr,
+	NULL,
+};
+
+static struct attribute *true_view_attrs[] = {
+	&dev_attr_true_view.attr,
+	NULL,
+};
+
+static const struct attribute_group color_manager_attr_group = {
+	.name	= "img_tune",
+	.attrs	= color_manager_attrs,
+};
+
+static const struct attribute_group vr_attr_group = {
+	.name	= "img_tune",
+	.attrs	= vr_attrs,
+};
+
+static const struct attribute_group true_view_attr_group = {
+	.name	= "img_tune",
+	.attrs	= true_view_attrs,
+};
+
 int lge_color_manager_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev)
 {
 	int rc = 0;
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_daylight_mode)) < 0)
-		pr_err("add daylight_mode set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_hdr_mode)) < 0)
-		pr_err("add hdr_mode node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_sharpness)) < 0)
-		pr_err("add sharpness set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_screen_mode)) < 0)
-		pr_err("add screen_mode set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_screen_tune)) < 0)
-		pr_err("add screen_tune set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_rgb_tune)) < 0)
-		pr_err("add rgb_tune set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_color_manager_status)) < 0)
-		pr_err("add color_manager_status set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_color_manager_mode)) < 0)
-		pr_err("add color_manager_mode set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_hdr_hbm_lut)) < 0)
-		pr_err("add hdr_hbm_lut set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_acl_mode)) < 0)
-		pr_err("add acl_mode set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_video_enhancement)) < 0)
-		pr_err("add video enhancement_mode set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_therm_dim)) < 0)
-		pr_err("add therm_dim set node fail!");
-	if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_brightness_dim)) < 0)
-		pr_err("add brightness dim node fail!\n");
+	if (panel_sysfs_dev) {
+		if (panel->lge.use_color_manager) {
+			if ((rc = sysfs_create_group(&panel_sysfs_dev->kobj, &color_manager_attr_group)) < 0)
+				pr_err("create img_tune group fail!");
 
-	if (panel->lge.use_vr_lp_mode) {
-		if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_vr_low_persist)) < 0)
-			pr_err("add vr lp_mode node fail!\n");
+			if (panel->lge.use_vr_lp_mode) {
+				if ((rc = sysfs_merge_group(&panel_sysfs_dev->kobj, &vr_attr_group)) < 0)
+					pr_err("merge vr lp_mode group fail!\n");
+			}
+
+			if (panel->lge.true_view_supported) {
+				if ((rc = sysfs_merge_group(&panel_sysfs_dev->kobj, &true_view_attr_group)) < 0)
+					pr_err("merge true_view group fail!\n");
+			}
+		}
 	}
-
-	if (panel->lge.true_view_supported) {
-		if ((rc = device_create_file(panel_sysfs_dev, &dev_attr_true_view)) < 0)
-			pr_err("add true_view node fail!\n");
-	}
-
 	return rc;
 }
 

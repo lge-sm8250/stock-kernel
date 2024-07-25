@@ -95,10 +95,6 @@ static const char *pm_verb(int event)
 	}
 }
 
-#ifdef CONFIG_LGE_PM
-#define MAX_ALLOWED_DEVICE_SUSPEND_DELAY_TIME 20
-#endif
-
 /**
  * device_pm_sleep_init - Initialize system suspend-related device fields.
  * @dev: Device object being initialized.
@@ -495,7 +491,7 @@ static void dpm_show_time(ktime_t starttime, pm_message_t state, int error,
 			  const char *info)
 {
 #if defined(CONFIG_MACH_LGE)
-	struct timespec64 time;
+	struct timespec time;
 	struct tm tmresult;
 #endif
 	ktime_t calltime;
@@ -534,7 +530,7 @@ static void dpm_show_time(ktime_t starttime, pm_message_t state, int error,
 	}
 
 	if (info == NULL && state.event == PM_EVENT_RESUME) {
-		time = current_kernel_time64();
+		time = __current_kernel_time();
 		time_to_tm(time.tv_sec, sys_tz.tz_minuteswest * 60 * (-1),
 				&tmresult);
 		snprintf(resume_time,
@@ -829,7 +825,7 @@ static void async_resume_noirq(void *data, async_cookie_t cookie)
 }
 
 #if defined(CONFIG_MACH_LGE)
-static int nsec64_resume_spend = 20000; /* over 20ms */
+static int nsec64_resume_spend = 10000; /* over 10ms */
 #endif
 
 void dpm_noirq_resume_devices(pm_message_t state)
@@ -1620,11 +1616,6 @@ int dpm_noirq_suspend_devices(pm_message_t state)
 	while (!list_empty(&dpm_late_early_list)) {
 		struct device *dev = to_device(dpm_late_early_list.prev);
 
-#ifdef CONFIG_LGE_PM
-		ktime_t suspend_starttime = ktime_get();
-		ktime_t suspend_endtime;
-#endif
-
 		get_device(dev);
 		mutex_unlock(&dpm_list_mtx);
 
@@ -1639,15 +1630,6 @@ int dpm_noirq_suspend_devices(pm_message_t state)
 		}
 		if (!list_empty(&dev->power.entry))
 			list_move(&dev->power.entry, &dpm_noirq_list);
-#ifdef CONFIG_LGE_PM
-		suspend_endtime = ktime_get();
-		if(ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime))
-				> MAX_ALLOWED_DEVICE_SUSPEND_DELAY_TIME){
-			pr_err("[Suspend] Over Max allowed noirq device suspend time name = %s(%s), elta = %llu\n", 
-					dev_name(dev), dev_driver_string(dev), 
-					ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime)));
-		}
-#endif
 		put_device(dev);
 
 		if (async_error)
@@ -1837,11 +1819,6 @@ int dpm_suspend_late(pm_message_t state)
 	while (!list_empty(&dpm_suspended_list)) {
 		struct device *dev = to_device(dpm_suspended_list.prev);
 
-#ifdef CONFIG_LGE_PM
-		ktime_t suspend_starttime = ktime_get();
-		ktime_t suspend_endtime;
-#endif
-
 		get_device(dev);
 		mutex_unlock(&dpm_list_mtx);
 
@@ -1857,15 +1834,6 @@ int dpm_suspend_late(pm_message_t state)
 			put_device(dev);
 			break;
 		}
-#ifdef CONFIG_LGE_PM
-		suspend_endtime = ktime_get();
-		if(ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime)) 
-				> MAX_ALLOWED_DEVICE_SUSPEND_DELAY_TIME){
-			pr_err("[Suspend] Over Max allowed late device suspend time name = %s(%s), delta = %llu\n",
-					dev_name(dev), dev_driver_string(dev), 
-					ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime)));
-		}
-#endif
 		put_device(dev);
 
 		if (async_error)
@@ -2129,11 +2097,6 @@ int dpm_suspend(pm_message_t state)
 	while (!list_empty(&dpm_prepared_list)) {
 		struct device *dev = to_device(dpm_prepared_list.prev);
 
-#ifdef CONFIG_LGE_PM
-		ktime_t suspend_starttime = ktime_get();
-		ktime_t suspend_endtime;
-#endif
-
 		get_device(dev);
 		mutex_unlock(&dpm_list_mtx);
 
@@ -2148,15 +2111,6 @@ int dpm_suspend(pm_message_t state)
 		}
 		if (!list_empty(&dev->power.entry))
 			list_move(&dev->power.entry, &dpm_suspended_list);
-#ifdef CONFIG_LGE_PM
-		suspend_endtime = ktime_get();
-		if(ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime))
-				> MAX_ALLOWED_DEVICE_SUSPEND_DELAY_TIME){
-			pr_err("[Suspend] Over Max allowed dpm device suspend time name = %s(%s), delta = %llu\n",
-					dev_name(dev), dev_driver_string(dev), 
-					ktime_to_ms(ktime_sub(suspend_endtime, suspend_starttime)));
-		}
-#endif
 		put_device(dev);
 		if (async_error)
 			break;

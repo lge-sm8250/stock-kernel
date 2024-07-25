@@ -7,6 +7,12 @@
 
 extern struct lge_ddic_ops sw43103_ops;
 extern struct lge_ddic_ops sw43410_ops;
+extern struct lge_ddic_ops sw49107_ops;
+extern struct lge_ddic_ops hx83113a_ops;
+extern struct lge_ddic_ops ft8756_ops;
+extern struct lge_ddic_ops rm692A9_ops;
+extern struct lge_ddic_ops rm692C9_ops;
+extern struct lge_ddic_ops r66456_ops;
 
 struct lge_ddic_match {
 	char compatible[15];
@@ -15,11 +21,18 @@ struct lge_ddic_match {
 
 static struct lge_ddic_match supported_ddic_list[] = {
 	{"sw43103", &sw43103_ops},
+	{"sw43103_wing", &sw43103_ops},
 	{"sw43410", &sw43410_ops},
+	{"sw49107", &sw49107_ops},
+	{"hx83113a", &hx83113a_ops},
+	{"ft8756", &ft8756_ops},
+	{"rm692A9", &rm692A9_ops},
+	{"rm692C9", &rm692C9_ops},
+	{"r66456", &r66456_ops},
 };
 
 extern char* get_ddic_name(void);
-extern bool is_ddic_name(char *ddic_name);
+extern bool is_ddic_name_matched(struct dsi_panel *panel, char *ddic_name);
 extern int lge_mdss_dsi_panel_cmds_backup(struct dsi_panel *panel, char *owner,
 				enum dsi_cmd_set_type type, u8 reg, int nth_cmds);
 
@@ -182,7 +195,7 @@ void lge_ddic_ops_init(struct dsi_panel *panel)
 	int count = sizeof(supported_ddic_list)/sizeof(supported_ddic_list[0]);
 
 	for (i = 0; i < count; ++i) {
-		if (is_ddic_name(supported_ddic_list[i].compatible)) {
+		if (is_ddic_name_matched(panel, supported_ddic_list[i].compatible)) {
 			panel->lge.ddic_ops = supported_ddic_list[i].ops;
 			break;
 		}
@@ -310,9 +323,11 @@ char *lge_ddic_cmd_set_prop_map[LGE_DDIC_DSI_CMD_SET_MAX] = {
 	"lge,mdss-dsi-saturation-command",
 	"lge,mdss-dsi-hue-command",
 	"lge,mdss-dsi-sharpness-command",
+	"lge,mdss-dsi-preset-command",
 	"lge,mdss-dsi-saturation-command",
 	"lge,mdss-dsi-hue-command",
 	"lge,mdss-dsi-sharpness-command",
+	"lge,mdss-dsi-preset-command",
 	"lge,mdss-dsi-cm-natural",
 	"lge,mdss-dsi-cm-vivid",
 	"lge,mdss-dsi-cm-cinema",
@@ -354,8 +369,12 @@ char *lge_ddic_cmd_set_prop_map[LGE_DDIC_DSI_CMD_SET_MAX] = {
 	"lge,mdss-dsi-fp-lhbm-off-command",
 	"lge,mdss-dsi-fp-lhbm-aod-to-fps",
 	"lge,mdss-dsi-fp-lhbm-fps-to-aod",
+	"lge,mdss-dsi-ecc-on-command",
+	"lge,mdss-dsi-ecc-off-command",
 	"lge,mdss-dsi-daylight-on-command",
 	"lge,mdss-dsi-daylight-off-command",
+	"lge,mdss-dsi-pre-fp-lhbm-on-command",
+	"lge,mdss-dsi-post-fp-lhbm-off-command",
 };
 
 char *lge_ddic_cmd_set_state_map[LGE_DDIC_DSI_CMD_SET_MAX] = {
@@ -380,9 +399,11 @@ char *lge_ddic_cmd_set_state_map[LGE_DDIC_DSI_CMD_SET_MAX] = {
 	"lge,mdss-dsi-saturation-command-state",
 	"lge,mdss-dsi-hue-command-state",
 	"lge,mdss-dsi-sharpness-command-state",
+	"lge,mdss-dsi-preset-command-state",
 	"lge,mdss-dsi-saturation-command-state",
 	"lge,mdss-dsi-hue-command-state",
 	"lge,mdss-dsi-sharpness-command-state",
+	"lge,mdss-dsi-preset-command-state",
 	"lge,mdss-dsi-cm-natural-state",
 	"lge,mdss-dsi-cm-vivid-state",
 	"lge,mdss-dsi-cm-cinema-state",
@@ -424,8 +445,34 @@ char *lge_ddic_cmd_set_state_map[LGE_DDIC_DSI_CMD_SET_MAX] = {
 	"lge,mdss-dsi-fp-lhbm-off-command-state",
 	"lge,mdss-dsi-fp-lhbm-aod-to-fps-state",
 	"lge,mdss-dsi-fp-lhbm-fps-to-aod-state",
+	"lge,mdss-dsi-ecc-on-command-state",
+	"lge,mdss-dsi-ecc-off-command-state",
 	"lge,mdss-dsi-daylight-on-command-state",
 	"lge,mdss-dsi-daylight-off-command-state",
+	"lge,mdss-dsi-pre-fp-lhbm-on-command-state",
+	"lge,mdss-dsi-post-fp-lhbm-off-command-state",
+};
+
+char *lge_ddic_cm_lut_cmd_set_prop_map[LGE_CM_LUT_TYPE_MAX] = {
+	"lge,cm-lut-screen-mode-set",
+	"lge,cm-lut-saturation",
+	"lge,cm-lut-sharpness",
+	"lge,cm-lut-rgb",
+	"lge,cm-lut-ace",
+	"lge,cm-lut-trueview",
+	"lge,cm-lut-rgb-hue",
+	"lge,cm-lut-hue",
+};
+
+char *lge_ddic_cm_lut_cmd_set_count_map[LGE_CM_LUT_TYPE_MAX] = {
+	"lge,cm-lut-screen-mode-set-cnt",
+	"lge,cm-lut-saturation-cnt",
+	"lge,cm-lut-sharpness-cnt",
+	"lge,cm-lut-rgb-cnt",
+	"lge,cm-lut-ace-cnt",
+	"lge,cm-lut-trueview-cnt",
+	"lge,cm-lut-rgb-hue-cnt",
+	"lge,cm-lut-hue-cnt",
 };
 
 /* lge_ddic_dsi_panel_tx_cmd_set for LGE DSI CMD SETS*/
@@ -437,9 +484,9 @@ int lge_ddic_dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 	struct dsi_cmd_desc *cmds;
 	u32 count;
 	enum dsi_cmd_set_state state;
-	const struct mipi_dsi_host_ops *ops = panel->host->ops;
+	const struct mipi_dsi_host_ops *ops = (panel != NULL)?panel->host->ops:NULL;
 
-	if (!panel) {
+	if (!panel || !ops) {
 		pr_err("panel is NULL\n");
 		return -EINVAL;
 	}
@@ -590,6 +637,11 @@ char* get_payload_addr(struct dsi_panel *panel, enum lge_ddic_dsi_cmd_set_type t
 		goto exit;
 	}
 
+	if (position >= cmd_set->count) {
+		pr_err("invalid position, count=%d, position=%d\n", cmd_set->count, position);
+		goto exit;
+	}
+
 	cmd = &(panel->lge.lge_cmd_sets[type].cmds[position]);
 	if (!cmd) {
 		pr_err("empty cmd\n");
@@ -625,6 +677,11 @@ int get_payload_cnt(struct dsi_panel *panel, enum lge_ddic_dsi_cmd_set_type type
 		goto exit;
 	}
 
+	if (position >= cmd_set->count) {
+		pr_err("invalid position, count=%d, position=%d\n", cmd_set->count, position);
+		goto exit;
+	}
+
 	cmd = &(panel->lge.lge_cmd_sets[type].cmds[position]);
 	if (!cmd) {
 		pr_err("empty cmd\n");
@@ -634,6 +691,165 @@ int get_payload_cnt(struct dsi_panel *panel, enum lge_ddic_dsi_cmd_set_type type
 	payload_count = (int)cmd->msg.tx_len;
 
 	pr_debug("find payload\n");
+
+exit:
+	return payload_count;
+}
+
+int lge_ddic_dsi_panel_parse_cm_lut_cmd_sets_sub(struct lge_cm_lut_list_set *cmd,
+					enum lge_cm_lut_type type,
+					struct device_node *of_node)
+{
+	int rc = 0;
+	u32 length = 0;
+	u32 packet_size = 0;
+	const char *data = NULL;
+	u8 *payload = NULL;
+	int i = 0, j = 0;
+
+	rc = of_property_read_u32(of_node, lge_ddic_cm_lut_cmd_set_count_map[type], &packet_size);
+
+	if (rc) {
+		pr_err("Unable to read packet_size of %s, rc:%d\n", lge_ddic_cm_lut_cmd_set_count_map[type], rc);
+		return rc;
+	}
+
+	data = of_get_property(of_node, lge_ddic_cm_lut_cmd_set_prop_map[type], &length);
+
+	if (!data) {
+		pr_err("Unable to get property: %s\n", lge_ddic_cm_lut_cmd_set_prop_map[type]);
+		rc = -EINVAL;
+		return rc;
+	}
+
+	cmd->count = length/packet_size;
+
+	cmd->cmds = kzalloc(cmd->count * sizeof(struct lge_lut_command), GFP_KERNEL);
+	if (!cmd->cmds) {
+		pr_err("Unable to allocate lut_command set\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
+	for (i = 0; i < cmd->count; i++) {
+		payload = kzalloc(packet_size, GFP_KERNEL);
+
+		if (!payload) {
+			pr_err("Unable to allocate palyload packet_size:%d\n", packet_size);
+			rc = -EINVAL;
+			goto error_free_payloads;
+		}
+
+		for (j = 0; j < packet_size; j++) {
+			payload[j] = data[packet_size*i + j];
+		}
+
+		cmd->cmds[i].buf = payload;
+		cmd->cmds[i].size = packet_size;
+    }
+
+	return rc;
+
+error_free_payloads:
+	for (i = i-1; i >= 0; i--) {
+		if (cmd->cmds[i].buf) {
+			kfree(cmd->cmds[i].buf);
+		}
+	}
+	kfree(cmd->cmds);
+	return rc;
+}
+
+int lge_ddic_dsi_panel_parse_cm_lut_cmd_sets(struct dsi_panel *panel,
+	struct device_node *of_node)
+{
+	int rc = 0;
+	struct lge_cm_lut_list_set *set;
+	u32 i;
+
+	for(i = 0; i < LGE_CM_LUT_TYPE_MAX; i++) {
+		set = &panel->lge.cm_lut_sets[i];
+		set->type = i;
+
+		rc = lge_ddic_dsi_panel_parse_cm_lut_cmd_sets_sub(set, i, of_node);
+		if(rc)
+			pr_err("parse set %d is failed or not defined\n", i);
+	}
+	return rc;
+}
+
+char* get_cm_lut_payload_addr(struct dsi_panel *panel, enum lge_cm_lut_type type, int position)
+{
+	struct lge_cm_lut_list_set *cmd_set = NULL;
+	struct lge_lut_command *cmd = NULL;
+	char *payload = NULL;
+
+	if (type >= LGE_CM_LUT_TYPE_MAX) {
+		pr_err("out of range\n");
+		goto exit;
+	}
+
+	cmd_set = &(panel->lge.cm_lut_sets[type]);
+	if (cmd_set->count == 0) {
+		pr_err("cmd set is not defined\n");
+		goto exit;
+	}
+
+	if (position >= cmd_set->count) {
+		pr_err("invalid position, count=%d, position=%d\n", cmd_set->count, position);
+		goto exit;
+	}
+
+	cmd = &(panel->lge.cm_lut_sets[type].cmds[position]);
+	if (!cmd) {
+		pr_err("empty cmd\n");
+		goto exit;
+	}
+
+	payload = (char *)cmd->buf;
+
+	if (!payload) {
+		pr_err("empty payload\n");
+		goto exit;
+	}
+
+	pr_debug("find payload\n");
+
+exit:
+	return payload;
+}
+
+int get_cm_lut_payload_cnt(struct dsi_panel *panel, enum lge_cm_lut_type type, int position)
+{
+	struct lge_cm_lut_list_set *cmd_set = NULL;
+	struct lge_lut_command *cmd = NULL;
+	int payload_count = 0;
+
+	if (type >= LGE_CM_LUT_TYPE_MAX) {
+		pr_err("out of range\n");
+		goto exit;
+	}
+
+	cmd_set = &(panel->lge.cm_lut_sets[type]);
+	if (cmd_set->count == 0) {
+		pr_info("cmd set is not defined\n");
+		goto exit;
+	}
+
+	if (position >= cmd_set->count) {
+		pr_err("invalid position, count=%d, position=%d\n", cmd_set->count, position);
+		goto exit;
+	}
+
+	cmd = &(panel->lge.cm_lut_sets[type].cmds[position]);
+	if (!cmd) {
+		pr_err("empty cmd\n");
+		goto exit;
+	}
+
+	payload_count = cmd->size;
+
+	pr_debug("find payload count:%d\n", payload_count);
 
 exit:
 	return payload_count;

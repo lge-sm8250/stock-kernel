@@ -16,6 +16,7 @@
 #include <linux/extcon-provider.h>
 #include <linux/usb/typec.h>
 #include "storm-watch.h"
+#include "battery.h"
 #if defined(CONFIG_LGE_USB_MOISTURE_DETECTION) \
 	&& defined(CONFIG_LGE_USB_SBU_SWITCH)
 #include <linux/usb/lge_sbu_switch.h>
@@ -23,7 +24,6 @@
 #ifdef CONFIG_LGE_DUAL_SCREEN
 #include <linux/lge_ds3.h>
 #endif
-#include "battery.h"
 
 enum print_reason {
 	PR_INTERRUPT	= BIT(0),
@@ -317,6 +317,7 @@ enum icl_override_mode {
 #ifdef CONFIG_LGE_PM
 	/* Factory mode */
 	SW_FACTORY_MODE,
+	HW_AUTO_MODE_SDP,
 #endif
 };
 
@@ -511,6 +512,7 @@ struct smb_charger {
 #ifdef CONFIG_LGE_USB_MOISTURE_DETECTION
 	struct delayed_work	sbu_ovp_work;
 #endif
+
 	struct alarm		lpd_recheck_timer;
 	struct alarm		moisture_protection_alarm;
 	struct alarm		chg_termination_alarm;
@@ -663,7 +665,9 @@ struct smb_charger {
 #endif
 #ifdef CONFIG_LGE_PM
 	struct votable		*dc_icl_votable;
+	struct votable		*dc_reset_votable;
 	struct ext_smb_charger *ext_chg;
+	int force_update;
 #endif
 };
 

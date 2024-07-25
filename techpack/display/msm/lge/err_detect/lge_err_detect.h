@@ -22,7 +22,7 @@
 
 void lge_panel_err_detect_init(struct dsi_panel *panel);
 void lge_panel_err_detect_parse_dt(struct dsi_panel *panel, struct device_node *of_node);
-int lge_panel_err_detect_create_sysfs(struct dsi_panel *panel, struct class *class_panel);
+int lge_panel_err_detect_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
 void lge_panel_err_detect_remove(struct dsi_panel *panel);
 void lge_panel_err_detect_irq_control(struct dsi_panel *panel, bool enable);
 #endif

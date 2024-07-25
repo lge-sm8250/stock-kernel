@@ -2429,6 +2429,7 @@ int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 		cnss_pr_err("Timeout (%ums) waiting for calibration to complete\n",
 			    timeout);
 		if (!test_bit(CNSS_IN_REBOOT, &plat_priv->driver_state)) {
+			cnss_pci_dump_bl_sram_mem(pci_priv);
 			CNSS_ASSERT(0);
 		}
 
@@ -3073,6 +3074,9 @@ int cnss_pci_pm_request_resume(struct cnss_pci_data *pci_priv)
 
 	dev = &pci_priv->pci_dev->dev;
 
+	if (!pm_runtime_enabled(dev))
+		return 0;
+
 	status = dev->power.runtime_status;
 	if (status == RPM_SUSPENDING || status == RPM_SUSPENDED)
 		cnss_pr_vdbg("Runtime PM resume is requested by %ps\n",
@@ -3090,6 +3094,9 @@ int cnss_pci_pm_runtime_resume(struct cnss_pci_data *pci_priv)
 		return -ENODEV;
 
 	dev = &pci_priv->pci_dev->dev;
+
+	if (!pm_runtime_enabled(dev))
+		return 0;
 
 	status = dev->power.runtime_status;
 	if (status == RPM_SUSPENDING || status == RPM_SUSPENDED)
@@ -3109,6 +3116,9 @@ int cnss_pci_pm_runtime_get(struct cnss_pci_data *pci_priv,
 		return -ENODEV;
 
 	dev = &pci_priv->pci_dev->dev;
+
+	if (!pm_runtime_enabled(dev))
+		return 0;
 
 	status = dev->power.runtime_status;
 	if (status == RPM_SUSPENDING || status == RPM_SUSPENDED)
@@ -3130,6 +3140,9 @@ int cnss_pci_pm_runtime_get_sync(struct cnss_pci_data *pci_priv,
 		return -ENODEV;
 
 	dev = &pci_priv->pci_dev->dev;
+
+	if (!pm_runtime_enabled(dev))
+		return 0;
 
 	status = dev->power.runtime_status;
 	if (status == RPM_SUSPENDING || status == RPM_SUSPENDED)
@@ -3161,6 +3174,9 @@ int cnss_pci_pm_runtime_put_autosuspend(struct cnss_pci_data *pci_priv,
 
 	dev = &pci_priv->pci_dev->dev;
 
+	if (!pm_runtime_enabled(dev))
+		return 0;
+
 	if (atomic_read(&dev->power.usage_count) == 0) {
 		cnss_pr_dbg("Ignore excessive runtime PM put operation\n");
 		return -EINVAL;
@@ -3180,6 +3196,9 @@ void cnss_pci_pm_runtime_put_noidle(struct cnss_pci_data *pci_priv,
 		return;
 
 	dev = &pci_priv->pci_dev->dev;
+
+	if (!pm_runtime_enabled(dev))
+		return;
 
 	if (atomic_read(&dev->power.usage_count) == 0) {
 		cnss_pr_dbg("Ignore excessive runtime PM put operation\n");
@@ -4415,6 +4434,7 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 	cnss_pci_dump_misc_reg(pci_priv);
 	cnss_pci_dump_shadow_reg(pci_priv);
 	cnss_pci_dump_qdss_reg(pci_priv);
+	cnss_pci_dump_bl_sram_mem(pci_priv);
 
 	ret = mhi_download_rddm_img(pci_priv->mhi_ctrl, in_panic);
 	if (ret) {

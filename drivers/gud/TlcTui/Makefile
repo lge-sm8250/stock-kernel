@@ -29,6 +29,7 @@ ccflags-$(CONFIG_TRUSTONIC_TEE_DEBUG) += -DDEBUG
 
 # MobiCore Driver includes
 ccflags-y += -I$(GUD_ROOT_FOLDER)/MobiCoreDriver/public
+ccflags-y += -Idrivers/misc/
 
 # MobiCore TlcTui required includes
 ccflags-y += -I$(GUD_ROOT_FOLDER)/TlcTui/inc \

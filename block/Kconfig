@@ -246,6 +246,4 @@ config BLK_MQ_RDMA
 	default y
 
 source block/Kconfig.iosched
-
-# LGE_S
-source block/Kconfig.lfs
+source "block/Kconfig.lfs"

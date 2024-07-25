@@ -2798,12 +2798,6 @@ static inline void kernel_poison_pages(struct page *page, int numpages,
 					int enable) { }
 #endif
 
-#ifdef CONFIG_CMA_PINPAGE_MIGRATION
-long get_user_pages_foll_cma(struct task_struct *tsk, struct mm_struct *mm,
-		unsigned long start, unsigned long nr_pages,
-		int write, int force, struct page **pages,
-		struct vm_area_struct **vmas);
-#endif
 #ifdef CONFIG_INIT_ON_ALLOC_DEFAULT_ON
 DECLARE_STATIC_KEY_TRUE(init_on_alloc);
 #else
@@ -2827,6 +2821,12 @@ static inline bool want_init_on_free(void)
 	return static_branch_unlikely(&init_on_free) &&
 	       !page_poisoning_enabled();
 }
+#ifdef CONFIG_CMA_PINPAGE_MIGRATION
+long get_user_pages_foll_cma(struct task_struct *tsk, struct mm_struct *mm,
+		unsigned long start, unsigned long nr_pages,
+		int write, int force, struct page **pages,
+		struct vm_area_struct **vmas);
+#endif
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
 extern bool _debug_pagealloc_enabled;

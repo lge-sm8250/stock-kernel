@@ -716,7 +716,6 @@ struct Scsi_Host {
 	 * Needed just in case we have virtual hosts.
 	 */
 	struct device *dma_dev;
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	unsigned int  by_usb;
 #endif

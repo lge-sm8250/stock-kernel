@@ -96,7 +96,6 @@ int dsi_pwr_enable_regulator(struct dsi_regulator_info *regs, bool enable);
  */
 int dsi_pwr_set_regulator(struct dsi_regulator_info *regs, int mode);
 #endif
-
 /**
  * dsi_pwr_panel_regulator_mode_set()
  * set regulator mode for OLED panel

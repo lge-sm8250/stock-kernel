@@ -1,4 +1,4 @@
-/* Copyright (c) 2014 LG Electronics, Inc.
+/* Copyright (c) 2014-2020 LG Electronics, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -43,6 +43,7 @@ struct qsdl {
 
 static struct device *lge_qsdl_dev;
 static unsigned int modem_ssr_count;
+static unsigned int lge_qsdl_enable;
 
 int lge_qsdl_trigger_modem_uevent(void)
 {
@@ -304,6 +305,17 @@ static struct platform_device lge_qsdl_device = {
 	}
 };
 
+static int __init lge_support_qsdl(char *enable)
+{
+	int ret = 0;
+
+	ret = kstrtoint(enable, 10, &lge_qsdl_enable);
+	pr_info("LGE QSDL support: %s\n",
+			(lge_qsdl_enable ? "enable" : "disable"));
+	return 1;
+}
+__setup("lge.qsdl=", lge_support_qsdl);
+
 void __init lge_add_qsdl_device(void)
 {
 	platform_device_register(&lge_qsdl_device);
@@ -311,12 +323,18 @@ void __init lge_add_qsdl_device(void)
 
 static int __init lge_qsdl_handler_init(void)
 {
+	if (!lge_qsdl_enable)
+		return 0;
+
 	lge_add_qsdl_device();
 	return platform_driver_register(&qsdl_handler_driver);
 }
 
 static void __exit lge_qsdl_handler_exit(void)
 {
+	if (!lge_qsdl_enable)
+		return;
+
 	platform_driver_unregister(&qsdl_handler_driver);
 }
 

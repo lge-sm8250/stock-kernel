@@ -30,7 +30,6 @@
 
 #include <soc/qcom/lge/board_lge.h>
 #include <linux/thermal.h>
-#include <soc/qcom/lge/lge_monitor_thermal.h>
 
 #include <../../../../kernel/sched/sched.h>
 #include <linux/power_supply.h>
@@ -47,10 +46,13 @@ struct lge_monitor_thermal_data {
 	unsigned int hot_polling_time;
 	unsigned int hot_crit_temp;
 	unsigned int last_xo_temp;
+	unsigned int last_pa1_temp;
+	unsigned int last_pa2_temp;
+	unsigned int last_pa3_temp;
 	unsigned int last_quiet_temp;
-	unsigned int last_skin_temp;
 	unsigned int last_vts_temp;
-#ifdef CONFIG_MACH_KONA_TIMELM
+
+// For mmW START
 	unsigned int last_qtm_n_temp;
 	unsigned int last_qtm_e_temp;
 	unsigned int last_qtm_w_temp;
@@ -58,17 +60,21 @@ struct lge_monitor_thermal_data {
 	unsigned int last_qtm1_vts_temp;
 	unsigned int last_qtm2_vts_temp;
 	unsigned int last_qtm_modem_vts_temp;
-#endif
+// For mmW END
+
 	int last_batt_temp;
 	int last_batt_current;
 	int last_batt_voltage;
 	int last_batt_soc;
 
 	struct thermal_zone_device *tz_xo;
+	struct thermal_zone_device *tz_pa1;
+	struct thermal_zone_device *tz_pa2;
+	struct thermal_zone_device *tz_pa3;
 	struct thermal_zone_device *tz_quiet;
-	struct thermal_zone_device *tz_skin;
 	struct thermal_zone_device *tz_vts;
-#ifdef CONFIG_MACH_KONA_TIMELM
+
+// For mmW START
 	struct thermal_zone_device *tz_qtm_n;
 	struct thermal_zone_device *tz_qtm_e;
 	struct thermal_zone_device *tz_qtm_w;
@@ -76,7 +82,8 @@ struct lge_monitor_thermal_data {
 	struct thermal_zone_device *tz_qtm1_vts;
 	struct thermal_zone_device *tz_qtm2_vts;
 	struct thermal_zone_device *tz_qtm_modem_vts;
-#endif
+// For mmW END
+
 	struct delayed_work init_monitor_work_struct;
 	struct delayed_work monitor_work_struct;
 	struct power_supply     *batt_psy;
@@ -91,7 +98,7 @@ module_param(enable, int, 0);
 
 static int forced_vts_set = 0;
 
-#ifdef CONFIG_MACH_KONA_TIMELM
+// For mmW START
 static int forced_qtm_n_set = 0;
 static int forced_qtm_e_set = 0;
 static int forced_qtm_w_set = 0;
@@ -99,7 +106,10 @@ static int forced_qtm0_vts_set = 0;
 static int forced_qtm1_vts_set = 0;
 static int forced_qtm2_vts_set = 0;
 static int forced_qtm_modem_vts_set = 0;
+#ifdef CONFIG_LGE_ONE_BINARY_SKU
+static enum lge_sku_carrier_type sku_carrier = HW_SKU_MAX;
 #endif
+// For mmW END
 
 static void poll_monitor_work(struct work_struct *work);
 static void init_monitor_work(struct work_struct *work);
@@ -117,18 +127,22 @@ return 0;
 static void get_tz_devs(struct lge_monitor_thermal_data *monitor_dd)
 {
 	if (!monitor_dd ||
-	    (monitor_dd->tz_xo && monitor_dd->tz_quiet &&
-	    monitor_dd->tz_skin && monitor_dd->tz_vts)) {
+	    (monitor_dd->tz_xo && monitor_dd->tz_pa1 &&
+	    monitor_dd->tz_pa2 && monitor_dd->tz_pa3 &&
+	    monitor_dd->tz_quiet &&
+	    monitor_dd->tz_vts)) {
 		return;
 	}
-	monitor_dd->tz_xo = thermal_zone_get_zone_by_name("xo-therm-usr");
-	monitor_dd->tz_quiet = thermal_zone_get_zone_by_name("quiet-therm-usr");
-	monitor_dd->tz_skin = thermal_zone_get_zone_by_name("skin-therm-usr");
-	monitor_dd->tz_vts = thermal_zone_get_zone_by_name("vts-virt-therm");
 
+	monitor_dd->tz_xo = thermal_zone_get_zone_by_name("xo-therm-usr");
+	monitor_dd->tz_pa1 = thermal_zone_get_zone_by_name("pa-therm1-usr");
+	monitor_dd->tz_pa2 = thermal_zone_get_zone_by_name("pa-therm2-usr");
+	monitor_dd->tz_pa3 = thermal_zone_get_zone_by_name("pa-therm3-usr");
+	monitor_dd->tz_quiet = thermal_zone_get_zone_by_name("quiet-therm-usr");
+	monitor_dd->tz_vts = thermal_zone_get_zone_by_name("vts-virt-therm");
 }
 
-#ifdef CONFIG_MACH_KONA_TIMELM
+// For mmW START
 static void get_modem_tz_devs(struct lge_monitor_thermal_data *monitor_dd)
 {
 	if (!monitor_dd ||
@@ -151,7 +165,7 @@ static void get_modem_tz_devs(struct lge_monitor_thermal_data *monitor_dd)
 	monitor_dd->tz_qtm2_vts = thermal_zone_get_zone_by_name("qtm-2-vts-therm");
 	monitor_dd->tz_qtm_modem_vts = thermal_zone_get_zone_by_name("qtm-modem-vts-therm");
 }
-#endif
+// For mmW END
 
 static ssize_t lge_vts_temp_get(struct device *dev,
                                 struct device_attribute *attr, char *buf)
@@ -192,7 +206,7 @@ static ssize_t lge_vts_temp_set(struct device *dev,
 static DEVICE_ATTR(vts_temp, S_IRUGO|S_IWUSR,
                    lge_vts_temp_get, lge_vts_temp_set);
 
-#ifdef CONFIG_MACH_KONA_TIMELM
+// For mmW START
 static ssize_t lge_qtm_n_temp_get(struct device *dev,
                                 struct device_attribute *attr, char *buf)
 {
@@ -468,7 +482,7 @@ static ssize_t lge_qtm_modem_vts_temp_set(struct device *dev,
 static DEVICE_ATTR(qtm_modem_vts, S_IRUGO|S_IWUSR,
                    lge_qtm_modem_vts_temp_get, lge_qtm_modem_vts_temp_set);
 
-#endif
+// For mmW END
 
 static ssize_t lge_monitor_disable_get(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -518,44 +532,50 @@ static void _poll_monitor(struct lge_monitor_thermal_data *monitor_dd)
 	union power_supply_propval prop = {0, };
 
 	get_tz_devs(monitor_dd);
-#ifdef CONFIG_MACH_KONA_TIMELM
-	get_modem_tz_devs(monitor_dd);
-#endif
 
-	if (monitor_dd->tz_xo && monitor_dd->tz_quiet &&
-	    monitor_dd->tz_skin && monitor_dd->tz_vts) {
+	if (monitor_dd->tz_xo && monitor_dd->tz_pa1 &&
+	    monitor_dd->tz_pa2 && monitor_dd->tz_pa3 &&
+	    monitor_dd->tz_quiet && monitor_dd->tz_vts) {
 		thermal_zone_get_temp(monitor_dd->tz_xo,
 				&monitor_dd->last_xo_temp);
+		thermal_zone_get_temp(monitor_dd->tz_pa1,
+				&monitor_dd->last_pa1_temp);
+		thermal_zone_get_temp(monitor_dd->tz_pa2,
+				&monitor_dd->last_pa2_temp);
+		thermal_zone_get_temp(monitor_dd->tz_pa3,
+				&monitor_dd->last_pa3_temp);
 		thermal_zone_get_temp(monitor_dd->tz_quiet,
 				&monitor_dd->last_quiet_temp);
-		thermal_zone_get_temp(monitor_dd->tz_skin,
-				&monitor_dd->last_skin_temp);
 		thermal_zone_get_temp(monitor_dd->tz_vts,
 				&monitor_dd->last_vts_temp);
 	}
 
-#ifdef CONFIG_MACH_KONA_TIMELM
-	if (monitor_dd->tz_qtm_n && monitor_dd->tz_qtm_e &&
-		monitor_dd->tz_qtm_w && monitor_dd->tz_qtm0_vts &&
-		monitor_dd->tz_qtm1_vts && monitor_dd->tz_qtm2_vts &&
-		monitor_dd->tz_qtm_modem_vts) {
-		thermal_zone_get_temp(monitor_dd->tz_qtm_n,
-				&monitor_dd->last_qtm_n_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm_e,
-				&monitor_dd->last_qtm_e_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm_w,
-				&monitor_dd->last_qtm_w_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm0_vts,
-				&monitor_dd->last_qtm0_vts_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm1_vts,
-				&monitor_dd->last_qtm1_vts_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm2_vts,
-				&monitor_dd->last_qtm2_vts_temp);
-		thermal_zone_get_temp(monitor_dd->tz_qtm_modem_vts,
-				&monitor_dd->last_qtm_modem_vts_temp);
-
+// For mmW START
+#ifdef CONFIG_LGE_ONE_BINARY_SKU
+	if (sku_carrier == HW_SKU_NA_CDMA_VZW) {
+		get_modem_tz_devs(monitor_dd);
+		if (monitor_dd->tz_qtm_n && monitor_dd->tz_qtm_e &&
+			monitor_dd->tz_qtm_w && monitor_dd->tz_qtm0_vts &&
+			monitor_dd->tz_qtm1_vts && monitor_dd->tz_qtm2_vts &&
+			monitor_dd->tz_qtm_modem_vts) {
+			thermal_zone_get_temp(monitor_dd->tz_qtm_n,
+					&monitor_dd->last_qtm_n_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm_e,
+					&monitor_dd->last_qtm_e_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm_w,
+					&monitor_dd->last_qtm_w_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm0_vts,
+					&monitor_dd->last_qtm0_vts_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm1_vts,
+					&monitor_dd->last_qtm1_vts_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm2_vts,
+					&monitor_dd->last_qtm2_vts_temp);
+			thermal_zone_get_temp(monitor_dd->tz_qtm_modem_vts,
+					&monitor_dd->last_qtm_modem_vts_temp);
+		}
 	}
 #endif
+// For mmW END
 
 	if (!monitor_dd->batt_psy) {
 		monitor_dd->batt_psy = power_supply_get_by_name("battery");
@@ -597,20 +617,30 @@ static void _poll_monitor(struct lge_monitor_thermal_data *monitor_dd)
 	} else
 		monitor_dd->last_batt_soc = prop.intval;
 
-	pr_info("[TM][I] XO:%3d, QUIET:%3d, MDM_SKIN:%3d, VTS:%3d\n",
+	pr_info("[TM][I] XO:%3d, PA1:%3d, PA2:%3d, PA3:%3d, QUIET:%3d VTS:%3d\n",
 			monitor_dd->last_xo_temp/1000,
+			monitor_dd->last_pa1_temp/1000,
+			monitor_dd->last_pa2_temp/1000,
+			monitor_dd->last_pa3_temp/1000,
 			monitor_dd->last_quiet_temp/1000,
-			monitor_dd->last_skin_temp/1000,
 			monitor_dd->last_vts_temp/1000);
 
-#ifdef CONFIG_MACH_KONA_TIMELM
-	pr_info("[TM][M] VTS:%3d, QTM0_VTS:%3d, QTM1_VTS:%3d, QTM2_VTS:%3d, QTM_MODEM_VTS:%3d\n",
-			monitor_dd->last_vts_temp/1000,
-			monitor_dd->last_qtm0_vts_temp/1000,
-			monitor_dd->last_qtm1_vts_temp/1000,
-			monitor_dd->last_qtm2_vts_temp/1000,
-			monitor_dd->last_qtm_modem_vts_temp/1000);
+// For mmW START
+#ifdef CONFIG_LGE_ONE_BINARY_SKU
+	if (sku_carrier == HW_SKU_NA_CDMA_VZW) {
+		pr_info("[TM][M] VTS:%3d, QTM0_VTS:%3d, QTM1_VTS:%3d, QTM2_VTS:%3d, QTM_MODEM_VTS:%3d,"
+				" QTM_E:%3d, QTM_W:%3d, QTM_N:%3d\n",
+				monitor_dd->last_vts_temp/1000,
+				monitor_dd->last_qtm0_vts_temp/1000,
+				monitor_dd->last_qtm1_vts_temp/1000,
+				monitor_dd->last_qtm2_vts_temp/1000,
+				monitor_dd->last_qtm_modem_vts_temp/1000,
+				monitor_dd->last_qtm_e_temp/1000,
+				monitor_dd->last_qtm_w_temp/1000,
+				monitor_dd->last_qtm_n_temp/1000);
+	}
 #endif
+// For mmW END
 
 	pr_info("[TM][B] BAT_TEMP:%d, IBAT:%d, BAT_VOL:%d, SOC:%d\n",
 			monitor_dd->last_batt_temp/10,
@@ -634,11 +664,13 @@ static void _poll_monitor(struct lge_monitor_thermal_data *monitor_dd)
 	}
 
 	list_for_each_entry_rcu(cluster, &cluster_head, list) {
-		pr_info("[TM][C] Cluster->id[%d], cur_freq:%u, min_freq:%u, max_freq:%u\n",
+		pr_info("[TM][C] Cluster->id[%d], cur_freq:%u, min_freq:%u, max_freq:%u,"
+				" max_mitigated_freq:%u\n",
 				cluster->id,
 				cluster->cur_freq,
 				cluster->min_freq,
-				cluster->max_freq);
+				cluster->max_freq,
+				cluster->max_mitigated_freq);
 	}
 }
 
@@ -680,15 +712,20 @@ static int lge_monitor_thermal_remove(struct platform_device *pdev)
 
 	device_remove_file(monitor_dd->dev, &dev_attr_disable);
 	device_remove_file(monitor_dd->dev, &dev_attr_vts_temp);
-#ifdef CONFIG_MACH_KONA_TIMELM
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm_n_temp);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm_e_temp);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm_w_temp);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm0_vts);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm1_vts);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm2_vts);
-	device_remove_file(monitor_dd->dev, &dev_attr_qtm_modem_vts);
+
+// For mmW START
+#ifdef CONFIG_LGE_ONE_BINARY_SKU
+	if (sku_carrier == HW_SKU_NA_CDMA_VZW) {
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm_n_temp);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm_e_temp);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm_w_temp);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm0_vts);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm1_vts);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm2_vts);
+		device_remove_file(monitor_dd->dev, &dev_attr_qtm_modem_vts);
+	}
 #endif
+// For mmW END
 
 	destroy_workqueue(monitor_wq);
 	kfree(monitor_dd);
@@ -717,35 +754,40 @@ static void init_monitor_work(struct work_struct *work)
 	if (error)
 		dev_err(monitor_dd->dev, "cannot create vts_temp sysfs attribute\n");
 
-#ifdef CONFIG_MACH_KONA_TIMELM
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm_n_temp);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm_n_temp sysfs attribute\n");
+// For mmW START
+#ifdef CONFIG_LGE_ONE_BINARY_SKU
+	sku_carrier = lge_get_sku_carrier();
+	if (sku_carrier == HW_SKU_NA_CDMA_VZW) {
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm_n_temp);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm_n_temp sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm_e_temp);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm_e_temp sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm_e_temp);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm_e_temp sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm_w_temp);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm_w_temp sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm_w_temp);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm_w_temp sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm0_vts);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm0_vts sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm0_vts);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm0_vts sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm1_vts);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm1_vts sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm1_vts);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm1_vts sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm2_vts);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm2_vts sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm2_vts);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm2_vts sysfs attribute\n");
 
-	error = device_create_file(monitor_dd->dev, &dev_attr_qtm_modem_vts);
-	if (error)
-		dev_err(monitor_dd->dev, "cannot create qtm_modem_vts sysfs attribute\n");
+		error = device_create_file(monitor_dd->dev, &dev_attr_qtm_modem_vts);
+		if (error)
+			dev_err(monitor_dd->dev, "cannot create qtm_modem_vts sysfs attribute\n");
+	}
 #endif
+// For mmW END
 
 	dev_info(monitor_dd->dev, "LGE monitor thermal Initialized\n");
 

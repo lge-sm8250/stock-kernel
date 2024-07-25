@@ -216,7 +216,7 @@ static int sdcardfs_symlink(struct inode *dir, struct dentry *dentry,
 out:
 	unlock_dir(lower_parent_dentry);
 	sdcardfs_put_lower_path(dentry, &lower_path);
-    revert_fsids(saved_cred);
+	revert_fsids(saved_cred);
 	return err;
 }
 #endif

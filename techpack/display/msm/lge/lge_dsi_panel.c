@@ -22,7 +22,19 @@
 #include "cm/lge_color_manager.h"
 #include "factory/lge_factory.h"
 #include "err_detect/lge_err_detect.h"
+#if defined(CONFIG_MFD_DW8768)
+#include <linux/mfd/dw8768.h>
+#endif
+#if defined(CONFIG_DSV_SM5109)
+#include <linux/mfd/sm5109.h>
+#endif
 
+#ifdef CONFIG_MACH_LITO_WINGLM
+#include <soc/qcom/lge/lge_handle_panic.h>
+#endif
+
+extern bool lge_get_factory_boot(void);
+extern int lge_panel_notifier_call_chain(unsigned long val, int display_id, int state);
 extern int mdss_dsi_parse_color_manager_modes(struct device_node *np,
 			struct lge_dsi_color_manager_mode_entry color_manager_table[NUM_COLOR_MODES],
 			u32 *color_manager_modes_num,
@@ -44,13 +56,13 @@ extern int dsi_panel_alloc_cmd_packets(struct dsi_panel_cmd_set *cmd,
 extern void lge_dsi_panel_blmap_free(struct dsi_panel *panel);
 extern int lge_dsi_panel_parse_blmap(struct dsi_panel *panel, struct device_node *of_node);
 extern int lge_dsi_panel_parse_brightness(struct dsi_panel *panel,	struct device_node *of_node);
-extern void lge_panel_drs_create_sysfs(struct dsi_panel *panel, struct class *class_panel);
-extern void lge_panel_reg_create_sysfs(struct dsi_panel *panel, struct class *class_panel);
+extern void lge_panel_drs_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
+extern void lge_panel_reg_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
 extern void lge_ddic_ops_init(struct dsi_panel *panel);
 extern void lge_ddic_feature_init(struct dsi_panel *panel);
 extern int lge_ddic_dsi_panel_parse_cmd_sets(struct dsi_panel *panel, struct device_node *of_node);
 extern int lge_update_backlight_ex(struct dsi_panel *panel);
-extern void lge_ambient_create_sysfs(struct dsi_panel *panel, struct class *class_panel);
+extern void lge_ambient_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
 extern int lge_drs_mngr_init(struct dsi_panel *panel);
 extern int lge_mdss_dsi_panel_cmd_read(struct dsi_panel *panel,
 					u8 cmd, int cnt, char* ret_buf);
@@ -59,12 +71,11 @@ extern int lge_mdss_dsi_panel_cmds_backup(struct dsi_panel *panel, char *owner,
 static int lge_dsi_panel_pin_seq(struct lge_panel_pin_seq *seq);
 extern int lge_ddic_dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 				enum lge_ddic_dsi_cmd_set_type type);
-extern int lge_brightness_create_sysfs(struct dsi_panel *panel,
-		struct class *class_panel);
-#if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
-extern void lge_cover_create_sysfs(struct dsi_panel *panel);
-#endif /* CONFIG_LGE_DUAL_SCREEN */
+extern int lge_brightness_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
 extern int lge_ambient_set_interface_data(struct dsi_panel *panel);
+extern int lge_panel_factory_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev);
+extern int lge_ddic_dsi_panel_parse_cm_lut_cmd_sets(struct dsi_panel *panel,
+				struct device_node *of_node);
 
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_DIMMING_BOOT_SUPPORT)
 /*---------------------------------------------------------------------------*/
@@ -116,6 +127,10 @@ static int lge_dsi_panel_mode_set(struct dsi_panel *panel)
 		pr_err("invalid params\n");
 		return -EINVAL;
 	}
+
+	if (panel->lge.ecc_status && panel->lge.ddic_ops && panel->lge.ddic_ops->lge_set_ecc_status)
+		panel->lge.ddic_ops->lge_set_ecc_status(panel, panel->lge.ecc_status);
+
 	reg_backup_cond = !(panel->lge.use_ddic_reg_backup^panel->lge.ddic_reg_backup_complete);
 
 	pr_info("backup=%d\n", reg_backup_cond);
@@ -132,7 +147,7 @@ static int lge_dsi_panel_mode_set(struct dsi_panel *panel)
 		pr_warn("skip ddic mode set on booting or not supported!\n");
 	}
 
-	if(panel->lge.use_tc_perf) {
+	if (panel->lge.use_tc_perf) {
 		tc_perf_status = panel->lge.tc_perf;
 		if (tc_perf_status && panel->lge.ddic_ops &&
 				panel->lge.ddic_ops->lge_set_tc_perf) {
@@ -150,27 +165,69 @@ static inline bool cmd_set_exists(struct dsi_panel *panel, enum lge_ddic_dsi_cmd
 	return (panel->lge.lge_cmd_sets[type].count != 0);
 }
 
-#define MAN_NAME_LEN    10
-#define	DDIC_NAME_LEN	15
-static char lge_man_name[MAN_NAME_LEN+1];
-static char lge_ddic_name[DDIC_NAME_LEN+1];
-
-char* get_ddic_name(void)
+char* get_ddic_name(void *disp)
 {
-	return lge_ddic_name;
+	struct dsi_panel *panel = NULL;
+	struct dsi_display *display = disp;
+
+	if (!display) {
+		return NULL;
+	}
+
+	panel = display->panel;
+
+	if (!panel) {
+		return NULL;
+	}
+
+	return panel->lge.ddic_name;
 }
 
-bool is_ddic_name(char *ddic_name)
+bool is_ddic_name_matched(struct dsi_panel *panel, char *ddic_name)
 {
+	if (panel == NULL || ddic_name == NULL) {
+		pr_err("input parameter is NULL\n");
+		return false;
+	}
+
+	if(!strcmp(panel->lge.ddic_name, ddic_name)) {
+		pr_err("ddic is matched : input ddic_name = %s, lge_ddic = %s\n", ddic_name, panel->lge.ddic_name);
+		return true;
+	}
+	pr_err("ddic is not matched : input ddic_name = %s, lge_ddic = %s\n", ddic_name, panel->lge.ddic_name);
+
+	return false;
+}
+
+bool is_ddic_name(uint32_t display_idx, char *ddic_name)
+{
+	struct dsi_display *display_prim = primary_display;
+	struct dsi_display *display_sec = secondary_display;
+	struct dsi_panel *panel;
+
 	if (ddic_name == NULL) {
 		pr_err("input parameter is NULL\n");
 		return false;
 	}
 
-	if(!strcmp(lge_ddic_name, ddic_name)) {
-		return true;
+	if (display_idx == 0 && display_prim) {
+		panel = display_prim->panel;
+
+		if (panel && !strcmp(panel->lge.ddic_name, ddic_name)) {
+			pr_info("primary ddic is matched : input ddic_name = %s, lge_ddic = %s\n", ddic_name, panel->lge.ddic_name);
+			return true;
+		}
+		pr_err("primary ddic is not matched\n");
+	} else if (display_idx == 1 && display_sec) {
+		panel = display_sec->panel;
+
+		if (panel && !strcmp(panel->lge.ddic_name, ddic_name)) {
+			pr_info("secondary ddic is matched : input ddic_name = %s, lge_ddic = %s\n", ddic_name, panel->lge.ddic_name);
+			return true;
+		}
+		pr_err("secondary ddic is not matched\n");
 	}
-	pr_err("input ddic_name = %s, lge_ddic = %s\n", ddic_name, lge_ddic_name);
+
 	return false;
 }
 EXPORT_SYMBOL(is_ddic_name);
@@ -553,7 +610,7 @@ static int dsi_panel_send_lp_cmds(struct dsi_panel *panel,
 	panel->lge.partial_area_vertical_changed = false;
 	panel->lge.partial_area_height_changed = false;
 
-	if (panel->lge.forced_lhbm == true)
+	if (panel->lge.forced_lhbm == true && panel->lge.ddic_ops && panel->lge.ddic_ops->lge_set_fp_lhbm)
 		panel->lge.ddic_ops->lge_set_fp_lhbm(panel, panel->lge.fp_lhbm_mode);
 
 exit:
@@ -594,7 +651,7 @@ int dsi_panel_set_lp2(struct dsi_panel *panel)
 		pr_err("fail to update lp state\n");
 	} else {
 		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK,
-				0, LGE_PANEL_STATE_LP2); /* U2_UNBLANK; DOZE */
+				panel->lge.display_id, LGE_PANEL_STATE_LP2); /* U2_UNBLANK; DOZE */
 	}
 
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_DIMMING_BOOT_SUPPORT)
@@ -626,7 +683,7 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 		pr_err("update lp state\n");
 	} else {
 		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK,
-				0, LGE_PANEL_STATE_LP1); /* U2_BLANK; DOZE_SUSPEND */
+				panel->lge.display_id, LGE_PANEL_STATE_LP1); /* U2_BLANK; DOZE_SUSPEND */
 	}
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_DIMMING_BOOT_SUPPORT)
 	lge_set_blank_called();
@@ -672,7 +729,7 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 		pr_err("fail to update lp state\n");
 	}
 
-	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, 0, LGE_PANEL_STATE_UNBLANK); // U3, UNBLANK
+	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, panel->lge.display_id, LGE_PANEL_STATE_UNBLANK); // U3, UNBLANK
 
 mode_set:
 	lge_dsi_panel_mode_set(panel);
@@ -680,65 +737,143 @@ mode_set:
 	return rc;
 }
 
+#if defined(CONFIG_DSV_SM5109)
+static int gpio_ldo_enable(struct dsi_panel *panel, bool enable)
+{
+	int rc;
+
+	if (enable) {
+		usleep_range(2000, 2000);
+		if (gpio_is_valid(panel->lge.touch_reset_gpio)) {
+			rc = gpio_direction_output(panel->lge.touch_reset_gpio, 1);
+			if (rc) {
+				DSI_ERR("unable to set dir for touch_reset_gpio gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+		usleep_range(3000, 3000);
+		if (gpio_is_valid(panel->lge.dsv_vpos_gpio_sm5109)) {
+			rc = gpio_direction_output(panel->lge.dsv_vpos_gpio_sm5109, 1);
+			if (rc) {
+				DSI_ERR("unable to set dir for dsv_vpos_gpio_sm5109 gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+		usleep_range(3000, 3000);
+		if (gpio_is_valid(panel->lge.dsv_vneg_gpio_sm5109)) {
+			rc = gpio_direction_output(panel->lge.dsv_vneg_gpio_sm5109, 1);
+			if (rc) {
+				DSI_ERR("unable to set dir for dsv_vneg_gpio_sm5109 gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+		usleep_range(3000, 3000);
+		sm5109_set_output_voltage(0x0F); /*+5.5V, -5.5V*/
+		sm5109_register_set(SM5109_DISCHARGE_STATUS_CONTROL_REG, 0x00);
+	} else {
+		if (gpio_is_valid(panel->lge.touch_reset_gpio)) {
+			rc = gpio_direction_output(panel->lge.touch_reset_gpio, 0);
+			if (rc) {
+				DSI_ERR("unable to set dir for touch_reset_gpio gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+		usleep_range(3000, 3000);
+		if (gpio_is_valid(panel->lge.dsv_vpos_gpio_sm5109)) {
+			rc = gpio_direction_output(panel->lge.dsv_vpos_gpio_sm5109, 0);
+			if (rc) {
+				DSI_ERR("unable to set dir for dsv_vpos_gpio_sm5109 gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+
+		if (gpio_is_valid(panel->lge.dsv_vneg_gpio_sm5109)) {
+			rc = gpio_direction_output(panel->lge.dsv_vneg_gpio_sm5109, 0);
+			if (rc) {
+				DSI_ERR("unable to set dir for dsv_vneg_gpio_sm5109 gpio rc=%d\n", rc);
+				goto exit;
+			}
+		}
+		usleep_range(3000, 3000);
+	}
+
+	exit:
+		return rc;
+}
+#endif
+
+#ifdef CONFIG_MACH_LITO_WINGLM
+typedef enum {
+    ENABLED_DISPLAY_PMIC_LDO_NONE = 0,
+    ENABLED_PRIM_DISPLAY_PIMC_LDO = 1, // BIT(0)
+    ENABLED_SEC_DISPLAY_PMIC_LDO  = 2, // BIT(1)
+    ENABLED_DISPLAY_PMIC_LDO_MAX  = 4, // BIT(3)
+} lge_hw_display_ldo_enabled;
+#endif
+
 /* @Override */
 int dsi_panel_power_on(struct dsi_panel *panel)
 {
 	int rc = 0;
 
-	rc = dsi_panel_set_pinctrl_state(panel, true);
-	if (rc) {
-		pr_err("[%s] failed to set pinctrl, rc=%d\n", panel->name, rc);
-		goto exit;
-	}
-
+	pr_info("[%s] ++\n", panel->name);
 	if (dsi_panel_full_power_seq(panel)) {
 		if (panel->lge.use_labibb) {
+#ifdef CONFIG_MACH_LITO_WINGLM
+			if (panel->lge.display_id == DSI_SECONDARY) {
+				//set smem display_ldo_enabled
+				lge_set_display_ldo_enabled(ENABLED_SEC_DISPLAY_PMIC_LDO);
+			}
+#endif
 			rc = dsi_pwr_enable_regulator(&panel->power_info, true);
 			if (rc) {
 				pr_err("[%s] failed to enable LABIBB, rc=%d\n", panel->name, rc);
-				goto error_pinctrl_false;
+				goto exit;
 			}
-			pr_info("Turn on vddi/vpnl\n");
-			lge_panel_notifier_call_chain(LGE_PANEL_EVENT_POWER, 0, LGE_PANEL_POWER_VDDIO_ON); // PANEL VDDIO ON
-			usleep_range(5000, 5000);
+			pr_info("[%s] Turn on labibb\n", panel->name);
+#ifdef CONFIG_MACH_LITO_WINGLM
+			if (panel->lge.display_id == DSI_SECONDARY) {
+				//unset smem display_ldo_enabled
+				lge_set_display_ldo_enabled(ENABLED_DISPLAY_PMIC_LDO_NONE);
+			}
+#endif
 		}
-		if(panel->lge.pins) {
+
+#if defined(CONFIG_DSV_SM5109)
+		rc = gpio_ldo_enable(panel, true);
+		if(rc) {
+			DSI_ERR("[%s] failed to gpio_ldo_enable true, rc=%d\n", panel->name, rc);
+		}
+#endif
+		if (panel->lge.pins) {
 			rc = lge_dsi_panel_pin_seq(panel->lge.panel_on_seq);
-			if (rc){
+			if (rc) {
 				pr_err("[%s] failed to set lge panel pin, rc=%d\n", panel->name, rc);
-				goto error_disable_gpio_before_ddvd;
+				goto error_disable_vregs;
 			}
-			usleep_range(5000, 5000);
+			pr_info("[%s] Turn on vddi/vpnl\n", panel->name);
 		}
+		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_POWER, panel->lge.display_id, LGE_PANEL_POWER_VDDIO_ON); // PANEL VDDIO ON
 	} else {
 		if (panel->lge.use_panel_reset_low_before_lp11) {
-			pr_info("[Display] reset low before LP11");
+			pr_info("[%s] reset low before LP11\n", panel->name);
 			if (gpio_is_valid(panel->reset_config.reset_gpio)) {
-				lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, 0, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
+				lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, panel->lge.display_id, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
 				gpio_set_value(panel->reset_config.reset_gpio, 0);
 				usleep_range(5000, 5000);
 			}
 		} else {
-			pr_info("[Display] Do not control display powers for Incell display");
+			pr_info("Do not control display powers for Incell display\n");
 		}
 	}
 
 	goto exit;
 
-error_disable_gpio_before_ddvd:
-	if (panel->lge.reset_after_ddvd)
-		dsi_pwr_enable_regulator(&panel->power_info, false);
-
-	if (dsi_panel_full_power_seq(panel) || panel->lge.use_panel_reset_low_before_lp11) {
-		if (panel->lge.use_labibb) {
-			dsi_pwr_enable_regulator(&panel->power_info, false);
-		}
-	}
-
-error_pinctrl_false:
-		(void)dsi_panel_set_pinctrl_state(panel, false);
+error_disable_vregs:
+	(void)dsi_pwr_enable_regulator(&panel->power_info, false);
 
 exit:
+	pr_info("[%s] --\n", panel->name);
 	return rc;
 }
 
@@ -775,6 +910,7 @@ int dsi_panel_power_off(struct dsi_panel *panel)
 {
 	int rc = 0;
 
+	pr_info("[%s] ++\n", panel->name);
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
@@ -783,21 +919,27 @@ int dsi_panel_power_off(struct dsi_panel *panel)
 
 	if (dsi_panel_full_power_seq(panel)) {
 		if(panel->lge.pins) {
+			pr_info("[%s] Turn off vddi/vpnl\n", panel->name);
 			lge_dsi_panel_pin_seq(panel->lge.panel_off_seq); // load
-			usleep_range(5000, 5000);
 		}
+
+#if defined(CONFIG_DSV_SM5109)
+		rc = gpio_ldo_enable(panel, false);
+		if(rc) {
+			DSI_ERR("[%s] failed to gpio_ldo_enable false, rc=%d\n", panel->name, rc);
+		}
+#endif
 		if (panel->lge.use_labibb) {
 			rc = dsi_pwr_enable_regulator(&panel->power_info, false);
 			if (rc)
 				pr_err("[%s] failed to disable LABIBB, rc=%d\n", panel->name, rc);
 			else {
-				pr_info("Turn off vddi/vpnl\n");
-				lge_panel_notifier_call_chain(LGE_PANEL_EVENT_POWER, 0, LGE_PANEL_POWER_VDDIO_OFF); // PANEL VDDIO LOW
+				pr_info("[%s] Turn off labibb\n", panel->name);
+				lge_panel_notifier_call_chain(LGE_PANEL_EVENT_POWER, panel->lge.display_id, LGE_PANEL_POWER_VDDIO_OFF); // PANEL VDDIO LOW
 			}
-			usleep_range(5000, 5000);
 		}
 	} else {
-		pr_info("[Display] Do not control LCD powers for LPWG mode");
+		pr_info("Do not control LCD powers for LPWG mode");
 	}
 
 	if (panel->lge.use_ddic_reg_backup && panel->lge.ddic_reg_backup_complete &&
@@ -805,17 +947,18 @@ int dsi_panel_power_off(struct dsi_panel *panel)
 		panel->lge.is_sent_bc_dim_set = false;
 	else if (!panel->lge.use_ddic_reg_backup && panel->lge.is_sent_bc_dim_set)
 		panel->lge.is_sent_bc_dim_set = false;
-	
+
 	if (panel->lge.use_irc_ctrl || panel->lge.use_ace_ctrl) {
 		if (panel->lge.ddic_ops && panel->lge.ddic_ops->bist_ctrl)
 			panel->lge.ddic_ops->set_irc_default_state(panel);
 		panel->lge.irc_pending = false;
 	}
 
-	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, 0, LGE_PANEL_STATE_BLANK); // U0, BLANK
+	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, panel->lge.display_id, LGE_PANEL_STATE_BLANK); // U0, BLANK
 #if IS_ENABLED(CONFIG_LGE_DISPLAY_DIMMING_BOOT_SUPPORT)
 	lge_set_blank_called();
 #endif
+	pr_info("[%s] --\n", panel->name);
 	return rc;
 }
 
@@ -830,9 +973,16 @@ static int dsi_panel_reset_off(struct dsi_panel *panel)
 	usleep_range(5000, 5000);
 
 	if (dsi_panel_full_power_seq(panel)) {
+		if (panel->lge.use_ext_dsv) {
+			if (panel->lge.is_incell && panel->lge.reset_after_ddvd) {
+				if(panel->lge.ddic_ops->lge_panel_dsv_ctrl)
+					panel->lge.ddic_ops->lge_panel_dsv_ctrl(panel, false);
+			}
+		}
+
 		if (gpio_is_valid(panel->reset_config.reset_gpio)) {
 			pr_info("Set Reset GPIO to Low\n");
-			lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, 0, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
+			lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, panel->lge.display_id, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
 			gpio_set_value(panel->reset_config.reset_gpio, 0);
 		}
 		usleep_range(5000, 5000);
@@ -842,10 +992,19 @@ static int dsi_panel_reset_off(struct dsi_panel *panel)
 			pr_err("[%s] failed set pinctrl state, rc=%d\n", panel->name, rc);
 		}
 		usleep_range(5000, 5000);
+
+		if (panel->lge.use_ext_dsv) {
+			if (panel->lge.is_incell && !panel->lge.reset_after_ddvd) {
+				if(panel->lge.ddic_ops->lge_panel_dsv_ctrl)
+					panel->lge.ddic_ops->lge_panel_dsv_ctrl(panel, false);
+			}
+		}
 	}
+
 	return rc;
 }
 
+/* @Override */
 int dsi_panel_reset(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -860,6 +1019,13 @@ int dsi_panel_reset(struct dsi_panel *panel)
 		}
 	}
 
+	if (panel->lge.use_ext_dsv) {
+		if (panel->lge.is_incell && panel->lge.reset_after_ddvd) {
+			if(panel->lge.ddic_ops->lge_panel_dsv_ctrl)
+				panel->lge.ddic_ops->lge_panel_dsv_ctrl(panel, true);
+		}
+	}
+
 	if (r_config->count) {
 		rc = gpio_direction_output(r_config->reset_gpio,
 			r_config->sequence[0].level);
@@ -870,7 +1036,7 @@ int dsi_panel_reset(struct dsi_panel *panel)
 	}
 
 	pr_info("Set Reset GPIO to HIGH\n");
-	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, 0, LGE_PANEL_RESET_HIGH); // PANEL RESET HIGH
+	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, panel->lge.display_id, LGE_PANEL_RESET_HIGH); // PANEL RESET HIGH
 	for (i = 0; i < r_config->count; i++) {
 		gpio_set_value(r_config->reset_gpio,
 			       r_config->sequence[i].level);
@@ -881,6 +1047,13 @@ int dsi_panel_reset(struct dsi_panel *panel)
 	}
 
 	usleep_range(5000, 5000);
+
+	if (panel->lge.use_ext_dsv) {
+		if (panel->lge.is_incell && !panel->lge.reset_after_ddvd) {
+			if(panel->lge.ddic_ops->lge_panel_dsv_ctrl)
+				panel->lge.ddic_ops->lge_panel_dsv_ctrl(panel, true);
+		}
+	}
 
 	if (gpio_is_valid(panel->bl_config.en_gpio)) {
 		rc = gpio_direction_output(panel->bl_config.en_gpio, 1);
@@ -922,7 +1095,7 @@ error_disable_gpio_and_regulator:
 
 error_disable_reset_pin:
 	if (gpio_is_valid(panel->reset_config.reset_gpio)) {
-		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, 0, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
+		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RESET, panel->lge.display_id, LGE_PANEL_RESET_LOW); // PANEL RESET LOW
 		gpio_set_value(panel->reset_config.reset_gpio, 0);
 	}
 exit:
@@ -1013,7 +1186,7 @@ int dsi_panel_unprepare(struct dsi_panel *panel)
 		}
 	}
 
-	if ((lge_drs_mngr_is_enabled(panel))
+	if (panel->lge.use_drs_mngr
 			&& (lge_drs_mngr_get_state(panel) > DRS_IDLE)) {
 		rc = lge_drs_mngr_finish(panel);
 		if (rc) {
@@ -1103,7 +1276,8 @@ int dsi_panel_post_enable(struct dsi_panel *panel)
 
 	if (panel->lge.panel_dead) {
 		panel->lge.panel_dead = false;
-		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RECOVERY, 0, LGE_PANEL_RECOVERY_ALIVE);
+		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RECOVERY, panel->lge.display_id, LGE_PANEL_RECOVERY_ALIVE);
+		pr_err("[%s] recovery done. bl_lvl_recovery_unset = %d, bl_lvl_unset = %d\n", panel->name, panel->lge.bl_lvl_recovery_unset, panel->lge.bl_lvl_unset);
 		if (panel->lge.bl_lvl_recovery_unset == -1) {
 			panel->bl_config.bl_level = panel->lge.bl_lvl_unset;
 			dsi_panel_set_backlight(panel, panel->lge.bl_lvl_unset);
@@ -1123,11 +1297,16 @@ int dsi_panel_post_enable(struct dsi_panel *panel)
 			lge_panel_err_detect_irq_control(panel, true);
 		}
 	}
+
 error:
 	mutex_unlock(&panel->panel_lock);
 
-	if (panel->lge.lp_state == LGE_PANEL_NOLP)
-		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, 0, LGE_PANEL_STATE_UNBLANK); // U3, UNBLANK
+	pr_info("lp_state=%d, dsi_mode_flags=0x%X\n",
+			panel->lge.lp_state, panel->cur_mode->dsi_mode_flags);
+	if (panel->lge.lp_state == LGE_PANEL_NOLP &&
+			!(panel->cur_mode->dsi_mode_flags & DSI_MODE_FLAG_DMS)) {
+		lge_panel_notifier_call_chain(LGE_PANEL_EVENT_BLANK, panel->lge.display_id, LGE_PANEL_STATE_UNBLANK); // U3, UNBLANK
+	}
 
 	return rc;
 }
@@ -1160,7 +1339,7 @@ static void lge_mdss_panel_dead_notify(struct dsi_display *display)
 		return;
 	}
 
-	pr_info("******** ESD detected!!!!LCD recovery function called!!!! ********\n");
+	pr_info("******** %s display : ESD detected!!!!LCD recovery function called!!!! ********\n", display->display_type);
 	display->panel->lge.panel_dead = true;
 
 	if (display->panel->lge.bl_lvl_unset == -1 && display->panel->lge.allow_bl_update == false)
@@ -1176,7 +1355,7 @@ static void lge_mdss_panel_dead_notify(struct dsi_display *display)
 		if (display->panel->lge.use_panel_err_detect && display->panel->lge.err_detect_irq_enabled)
 			lge_panel_err_detect_irq_control(display->panel, false);
 	}
-	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RECOVERY, 0, LGE_PANEL_RECOVERY_DEAD);
+	lge_panel_notifier_call_chain(LGE_PANEL_EVENT_RECOVERY, display->panel->lge.display_id, LGE_PANEL_RECOVERY_DEAD);
 
 	event.type = DRM_EVENT_PANEL_DEAD;
 	event.length = sizeof(u32);
@@ -1239,63 +1418,152 @@ void lge_mdss_panel_dead_work(struct work_struct *work)
 	lge_mdss_panel_dead_notify(display);
 }
 
-void lge_mdss_report_panel_dead(void)
+void lge_mdss_report_panel_dead()
+{
+	struct dsi_display *display_prim = NULL;
+	struct dsi_display *display_sec = NULL;
+	struct sde_connector *conn_prim = NULL;
+	struct sde_connector *conn_sec = NULL;
+
+	display_prim = primary_display;
+	display_sec = secondary_display;
+
+	if (!display_prim && !display_sec) {
+		pr_err("There is no display.\n");
+		return;
+	}
+
+	if (!display_prim->panel && !display_sec->panel) {
+		pr_err("There is no panel.\n");
+		return;
+	}
+
+	conn_prim = to_sde_connector(display_prim->drm_conn);
+	if(display_sec && display_sec->panel)
+		conn_sec = to_sde_connector(display_sec->drm_conn);
+
+	if (!conn_prim && !conn_sec) {
+		pr_err("There is no sde_connector\n");
+		return;
+	}
+
+	if (display_prim && display_prim->panel && conn_prim) {
+		mutex_lock(&conn_prim->lock);
+		if (dsi_panel_get_current_power_mode(display_prim->panel) != SDE_MODE_DPMS_ON) {
+			pr_info("primary : lp_state is not nolp(U3)\n");
+			if (!display_prim->panel->lge.panel_dead_pending) {
+				pr_info("primary : re-trigger panel_dead after 5 secs\n");
+				display_prim->panel->lge.panel_dead_pending = true;
+				mutex_unlock(&conn_prim->lock);
+				schedule_delayed_work(&display_prim->panel->lge.panel_dead_work,
+											msecs_to_jiffies(STATUS_CHECK_INTERVAL_MS));
+			} else {
+				pr_info("primary : already re-triggered panel_dead\n");
+				mutex_unlock(&conn_prim->lock);
+			}
+			return;
+		} else if (display_prim->panel->lge.panel_dead_pending) {
+			pr_err("primary : already panel dead work scheduled\n");
+			mutex_unlock(&conn_prim->lock);
+			return;
+		}
+		mutex_unlock(&conn_prim->lock);
+	}
+
+	if (display_sec && display_sec->panel && conn_sec) {
+		mutex_lock(&conn_sec->lock);
+		if (dsi_panel_get_current_power_mode(display_sec->panel) != SDE_MODE_DPMS_ON) {
+			pr_info("secondary : lp_state is not nolp(U3)\n");
+			if (!display_sec->panel->lge.panel_dead_pending) {
+				pr_info("secondary : re-trigger panel_dead after 5 secs\n");
+				display_sec->panel->lge.panel_dead_pending = true;
+				mutex_unlock(&conn_sec->lock);
+				schedule_delayed_work(&display_sec->panel->lge.panel_dead_work,
+											msecs_to_jiffies(STATUS_CHECK_INTERVAL_MS));
+			} else {
+				pr_info("secodary : already re-triggered panel_dead\n");
+				mutex_unlock(&conn_sec->lock);
+			}
+			return;
+		} else if (display_sec->panel->lge.panel_dead_pending) {
+			pr_err("secondary : already panel dead work scheduled\n");
+			mutex_unlock(&conn_sec->lock);
+			return;
+		}
+		mutex_unlock(&conn_sec->lock);
+	}
+	lge_mdss_panel_dead_notify(display_prim);
+}
+EXPORT_SYMBOL(lge_mdss_report_panel_dead);
+
+static void lge_mdss_report_panel_dead_individually(struct dsi_panel *panel)
 {
 	struct dsi_display *display = NULL;
 	struct sde_connector *conn = NULL;
+	struct drm_event event;
+	struct device *dev;
 
-	display = primary_display;
-
-	if (!display) {
-		pr_err("display is null.\n");
+	if (!panel) {
+		pr_err("invalid panel param\n");
 		return;
 	}
-	if (!display->panel) {
-		pr_err("panel is null.\n");
+
+	display = container_of(panel->host, struct dsi_display, host);
+	if (!display) {
+		pr_err("invalid display param\n");
 		return;
 	}
 
 	conn = to_sde_connector(display->drm_conn);
-	if (!conn) {
-		pr_err("display->drm_conn is null\n");
+	if (!conn)
 		return;
-	}
+
+	panel->lge.force_panel_dead = true;
 
 	mutex_lock(&conn->lock);
-	if (dsi_panel_get_current_power_mode(display->panel) != SDE_MODE_DPMS_ON) {
-		pr_info("lp_state is not nolp(U3)\n");
-		if (!display->panel->lge.panel_dead_pending) {
-			pr_info("re-trigger panel_dead after 5 secs\n");
-			display->panel->lge.panel_dead_pending = true;
-			mutex_unlock(&conn->lock);
-			schedule_delayed_work(&display->panel->lge.panel_dead_work,
-							msecs_to_jiffies(STATUS_CHECK_INTERVAL_MS));
-		} else {
-			pr_info("already re-triggered panel_dead\n");
-			mutex_unlock(&conn->lock);
-		}
-		return;
-	} else if (display->panel->lge.panel_dead_pending) {
-		pr_err("already panel dead work scheduled\n");
+	dev = conn->base.dev->dev;
+
+	if (!conn->ops.check_status || dev->power.is_suspended ||
+					(conn->dpms_mode != DRM_MODE_DPMS_ON)) {
+		pr_err("dpms mode: %d\n", conn->dpms_mode);
 		mutex_unlock(&conn->lock);
 		return;
 	}
 
+	conn->ops.check_status(&conn->base, display, true);
 	mutex_unlock(&conn->lock);
 
-	lge_mdss_panel_dead_notify(display);
+	event.type = DRM_EVENT_PANEL_DEAD;
+	event.length = sizeof(u32);
+	msm_mode_object_event_notify(&conn->base.base,
+		conn->base.dev, &event, (u8 *)&panel->lge.panel_dead);
+	sde_encoder_display_failure_notification(conn->encoder, false);
+
+	panel->lge.force_panel_dead = false;
 }
-EXPORT_SYMBOL(lge_mdss_report_panel_dead);
 
 static ssize_t lge_mdss_force_report_panel_dead(struct device *dev,
 								struct device_attribute *attr,
 								char *buf)
 {
-	lge_mdss_report_panel_dead();
+	struct dsi_panel *panel;
+
+	panel = dev_get_drvdata(dev);
+	lge_mdss_report_panel_dead_individually(panel);
 	return 1;
 }
 static DEVICE_ATTR(report_panel_dead, S_IRUGO,
 										lge_mdss_force_report_panel_dead, NULL);
+
+static struct attribute *test_attrs[] = {
+	&dev_attr_report_panel_dead.attr,
+	NULL,
+};
+
+static const struct attribute_group test_attr_group = {
+	.name	= "test",
+	.attrs	= test_attrs,
+};
 
 static int lge_dsi_panel_gpio_request(struct dsi_panel *panel)
 {
@@ -1330,93 +1598,22 @@ static int lge_dsi_panel_gpio_release(struct dsi_panel *panel)
 		if (gpio_is_valid(panel->lge.pins[i]))
 			gpio_free(panel->lge.pins[i]);
 	}
+#if defined(CONFIG_DSV_SM5109)
+	if (gpio_is_valid(panel->lge.dsv_vpos_gpio_sm5109))
+		gpio_free(panel->lge.dsv_vpos_gpio_sm5109);
+	if (gpio_is_valid(panel->lge.dsv_vneg_gpio_sm5109))
+		gpio_free(panel->lge.dsv_vneg_gpio_sm5109);
+	if (gpio_is_valid(panel->lge.touch_reset_gpio))
+		gpio_free(panel->lge.touch_reset_gpio);
+#endif
 	return rc;
-}
-
-static ssize_t panel_type_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct dsi_panel *panel = NULL;
-
-	panel = dev_get_drvdata(dev);
-	if (!panel) {
-		pr_err("panel is NULL\n");
-		return -EINVAL;
-	}
-
-	pr_err("%s-%s\n", lge_man_name, lge_ddic_name);
-
-	/* The number of characters should not exceed 30 characters. */
-	return sprintf(buf, "%s-%s\n", lge_man_name, lge_ddic_name);
-}
-static DEVICE_ATTR(panel_type, S_IRUGO,
-		panel_type_show, NULL);
-
-static ssize_t mfts_auto_touch_test_mode_get(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct dsi_panel *panel;
-
-	panel = dev_get_drvdata(dev);
-
-	if (!panel) {
-		pr_err("panel is NULL\n");
-		return -EINVAL;
-	}
-
-	return sprintf(buf, "%d\n", panel->lge.mfts_auto_touch);
-}
-
-static ssize_t mfts_auto_touch_test_mode_set(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t size)
-
-{
-	struct dsi_panel *panel;
-	int input;
-
-	panel = dev_get_drvdata(dev);
-	if (!panel) {
-		pr_err("panel is NULL\n");
-		return -EINVAL;
-	}
-
-	sscanf(buf, "%d", &input);
-	mutex_lock(&panel->panel_lock);
-	panel->lge.mfts_auto_touch = input;
-	mutex_unlock(&panel->panel_lock);
-
-	pr_info("auto touch test : %d\n", input);
-
-	return size;
-}
-static DEVICE_ATTR(mfts_auto_touch_test_mode, S_IRUGO | S_IWUSR | S_IWGRP,
-		mfts_auto_touch_test_mode_get, mfts_auto_touch_test_mode_set);
-
-void lge_panel_factory_create_sysfs(struct dsi_panel *panel, struct class *class_panel)
-{
-	static struct device *panel_reg_dev = NULL;
-
-	if (!panel_reg_dev) {
-		panel_reg_dev = device_create(class_panel, NULL, 0, panel, "factory");
-		if (IS_ERR(panel_reg_dev)) {
-			pr_err("Failed to create dev(panel_reg_dev)!\n");
-		} else {
-			if ((device_create_file(panel_reg_dev, &dev_attr_panel_type)) < 0)
-				pr_err("add panel_type node fail!\n");
-			if ((device_create_file(panel_reg_dev, &dev_attr_mfts_auto_touch_test_mode)) < 0)
-				pr_err("add mfts_auto_touch_test_mode node fail!\n");
-			if (panel->lge.use_line_detect)
-				lge_panel_line_detect_create_sysfs(panel_reg_dev);
-		}
-	}
 }
 
 static void lge_dsi_panel_create_sysfs(struct dsi_panel *panel)
 {
 	static struct class *class_panel = NULL;
-	static struct device *panel_img_tune_sysfs_dev = NULL;
-	static struct device *panel_test_sysfs_dev = NULL;
-	int rc =0;
+	static struct device *dev_panel_prim = NULL;
+	static struct device *dev_panel_sec = NULL;
 
 	if(!class_panel){
 		class_panel = class_create(THIS_MODULE, "panel");
@@ -1426,42 +1623,45 @@ static void lge_dsi_panel_create_sysfs(struct dsi_panel *panel)
 		}
 	}
 
-	if(!panel_img_tune_sysfs_dev){
-		panel_img_tune_sysfs_dev = device_create(class_panel, NULL, 0, panel, "img_tune");
-		if (IS_ERR(panel_img_tune_sysfs_dev)) {
-			pr_err("Failed to create dev(panel_img_tune_sysfs_dev)!\n");
-		} else {
-			if (panel->lge.use_color_manager)
-				lge_color_manager_create_sysfs(panel, panel_img_tune_sysfs_dev);
+	if (panel->lge.display_id == DSI_PRIMARY) {
+		if(!dev_panel_prim) {
+			dev_panel_prim = device_create(class_panel, NULL, 0, panel, "panel-0");
+			if (IS_ERR(class_panel)) {
+				pr_err("Failed to create panel-0 device\n");
+				return;
+			}
+
+			lge_color_manager_create_sysfs(panel, dev_panel_prim);
+			lge_brightness_create_sysfs(panel, dev_panel_prim);
+			lge_ambient_create_sysfs(panel, dev_panel_prim);
+			lge_panel_drs_create_sysfs(panel, dev_panel_prim);
+			lge_panel_reg_create_sysfs(panel, dev_panel_prim);
+			lge_panel_factory_create_sysfs(panel, dev_panel_prim);
+			lge_panel_err_detect_create_sysfs(panel, dev_panel_prim);
+
+			if (sysfs_create_group(&dev_panel_prim->kobj, &test_attr_group) < 0)
+				pr_err("create test group fail!");
+		}
+	} else if (panel->lge.display_id == DSI_SECONDARY) {
+		if(!dev_panel_sec) {
+			dev_panel_sec = device_create(class_panel, NULL, 0, panel, "panel-1");
+			if (IS_ERR(class_panel)) {
+				pr_err("Failed to create panel-1 device\n");
+				return;
+			}
+
+			lge_color_manager_create_sysfs(panel, dev_panel_sec);
+			lge_brightness_create_sysfs(panel, dev_panel_sec);
+			lge_ambient_create_sysfs(panel, dev_panel_sec);
+			lge_panel_drs_create_sysfs(panel, dev_panel_sec);
+			lge_panel_reg_create_sysfs(panel, dev_panel_sec);
+			lge_panel_factory_create_sysfs(panel, dev_panel_sec);
+			lge_panel_err_detect_create_sysfs(panel, dev_panel_sec);
+
+			if (sysfs_create_group(&dev_panel_sec->kobj, &test_attr_group) < 0)
+				pr_err("create test group fail!");
 		}
 	}
-	if (panel->lge.use_irc_ctrl || panel->lge.use_ace_ctrl ||
-			panel->lge.use_dynamic_brightness || panel->lge.use_fp_lhbm ||
-			panel->lge.use_tc_perf)
-		lge_brightness_create_sysfs(panel, class_panel);
-	if (panel->lge.use_ambient)
-		lge_ambient_create_sysfs(panel, class_panel);
-
-	if (panel->lge.use_drs_mngr)
-		lge_panel_drs_create_sysfs(panel, class_panel);
-
-	lge_panel_reg_create_sysfs(panel, class_panel);
-	lge_panel_factory_create_sysfs(panel, class_panel);
-	lge_panel_err_detect_create_sysfs(panel, class_panel);
-
-	if(!panel_test_sysfs_dev){
-		panel_test_sysfs_dev = device_create(class_panel, NULL, 0, panel, "test");
-		if (IS_ERR(panel_test_sysfs_dev)) {
-			pr_err("Failed to create dev(panel_test_sysfs_dev)!\n");
-		} else {
-			if ((rc = device_create_file(panel_test_sysfs_dev, &dev_attr_report_panel_dead)) < 0)
-				pr_err("add report_panel_dead set node fail!");
-		}
-	}
-
-#if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
-	lge_cover_create_sysfs(panel);
-#endif /* CONFIG_LGE_DUAL_SCREEN */
 }
 
 int lge_dsi_panel_drv_init(struct dsi_panel *panel)
@@ -1579,6 +1779,20 @@ static int lge_dsi_panel_parse_gpios(struct dsi_panel *panel, struct device_node
 {
 	int rc = 0, i;
 
+#if defined(CONFIG_DSV_SM5109)
+	panel->lge.touch_reset_gpio = of_get_named_gpio(of_node, "lge,touch-reset-gpio", 0);
+	if (gpio_is_valid(panel->lge.touch_reset_gpio))
+		pr_info("touch_reset_gpio: %d\n", panel->lge.touch_reset_gpio);
+
+	panel->lge.dsv_vpos_gpio_sm5109 = of_get_named_gpio(of_node, "lge,sm5109-dsv-vpos-gpio", 0);
+	if (gpio_is_valid(panel->lge.dsv_vpos_gpio_sm5109))
+		pr_info("dsv_vpos_gpio_sm5109: %d\n", panel->lge.dsv_vpos_gpio_sm5109);
+
+	panel->lge.dsv_vneg_gpio_sm5109 = of_get_named_gpio(of_node, "lge,sm5109-dsv-vneg-gpio", 0);
+	if (gpio_is_valid(panel->lge.dsv_vneg_gpio_sm5109))
+		pr_info("dsv_vneg_gpio_sm5109: %d\n", panel->lge.dsv_vneg_gpio_sm5109);
+#endif
+
 	panel->lge.pins_num = of_gpio_named_count(of_node, LGE_PROPNAME_PANEL_PINS);
 
 	if (panel->lge.pins_num <= 0) {
@@ -1606,6 +1820,11 @@ static int lge_dsi_panel_parse_gpios(struct dsi_panel *panel, struct device_node
 		goto error_parse_pins;
 	}
 
+#if defined(CONFIG_MFD_DW8768)
+	panel->lge.dsv_ena_gpio_dw8768 = of_get_named_gpio(of_node, "lge,dw8768-dsv-ena-gpio", 0);
+	if (gpio_is_valid(panel->lge.dsv_ena_gpio_dw8768))
+		pr_info("dsv_ena_gpio_dw8768: %d\n", panel->lge.dsv_ena_gpio_dw8768);
+#endif
 	return rc;
 
 error_parse_pins:
@@ -1627,29 +1846,30 @@ static int lge_dsi_panel_parse_dt(struct dsi_panel *panel, struct device_node *o
 	// TODO: change property name
 	panel->lp11_init = of_property_read_bool(of_node, "qcom,mdss-dsi-lane-0-state");
 
-	memset(lge_man_name, 0x0, MAN_NAME_LEN+1);
 	man_name = of_get_property(of_node, "lge,man-name", NULL);
 	if (man_name) {
-		strncpy(lge_man_name, man_name, MAN_NAME_LEN);
-		pr_info("lge_man_name=%s\n", lge_man_name);
+		strncpy(panel->lge.manufacturer_name, man_name, MAN_NAME_LEN);
+		pr_info("manufacturer name=%s\n", panel->lge.manufacturer_name);
 	} else {
-		strncpy(lge_man_name, "undefined", MAN_NAME_LEN);
+		strncpy(panel->lge.manufacturer_name, "undefined", MAN_NAME_LEN);
 		pr_info("manufacturer name is not set\n");
 	}
 
-	memset(lge_ddic_name, 0x0, DDIC_NAME_LEN+1);
 	ddic_name = of_get_property(of_node, "lge,ddic-name", NULL);
 	if (ddic_name) {
-		strncpy(lge_ddic_name, ddic_name, DDIC_NAME_LEN);
-		pr_info("lge_ddic_name=%s\n", lge_ddic_name);
+		strncpy(panel->lge.ddic_name, ddic_name, DDIC_NAME_LEN);
+		pr_info("ddic name=%s\n", panel->lge.ddic_name);
 	} else {
-		strncpy(lge_ddic_name, "undefined", DDIC_NAME_LEN);
+		strncpy(panel->lge.ddic_name, "undefined", DDIC_NAME_LEN);
 		pr_info("ddic name is not set\n");
 	}
 
 	// TODO: temporal use
 	panel->lge.use_labibb = of_property_read_bool(of_node, "lge,use-labibb");
 	pr_info("use_labibb=%d\n", panel->lge.use_labibb);
+
+	panel->lge.use_ext_dsv = of_property_read_bool(of_node, "lge,use-ext-dsv");
+	pr_info("use_ext_dsv=%d\n", panel->lge.use_ext_dsv);
 
 	panel->lge.reset_after_ddvd = of_property_read_bool(of_node, "lge,reset-after-ddvd");
 	pr_info("reset_after_ddvd=%d\n", panel->lge.reset_after_ddvd);
@@ -1787,15 +2007,31 @@ static int lge_dsi_panel_parse_dt(struct dsi_panel *panel, struct device_node *o
 	pr_info("use_br_ctrl_ext=%d\n", panel->lge.use_br_ctrl_ext);
 
 	panel->lge.use_fp_lhbm = of_property_read_bool(of_node, "lge,use-fp-lhbm");
+	pr_info("use_fp_lhbm=%d\n", panel->lge.use_fp_lhbm);
 	if(panel->lge.use_fp_lhbm) {
 		panel->lge.fp_lhbm_br_lvl = FP_LHBM_DEFAULT_BR_LVL;
 		panel->lge.need_fp_lhbm_set = false;
+		panel->lge.use_fps_mode1_new = of_property_read_bool(of_node, "lge,use-fps-mode1-new");
+		pr_info("use_fps_mode1_new=%d\n", panel->lge.use_fps_mode1_new);
 	}
-	pr_info("use_fp_lhbm=%d\n", panel->lge.use_fp_lhbm);
-
 	panel->lge.use_tc_perf = of_property_read_bool(of_node, "lge,use-tc-perf");
 	pr_info("use_tc_perf=%d\n", panel->lge.use_tc_perf);
 
+	panel->lge.use_cm_lut = of_property_read_bool(of_node, "lge,use-color-manager-lut");
+	pr_info("use color mananger lut supported=%d\n", panel->lge.use_cm_lut);
+
+	if (panel->lge.use_cm_lut) {
+		panel->lge.cm_lut_cnt = of_property_count_strings(of_node, "lge,cm-lut-screen-mode-set-name");
+		if (panel->lge.cm_lut_cnt) {
+			panel->lge.cm_lut_name_list = kzalloc(panel->lge.cm_lut_cnt * 8, GFP_KERNEL);
+			if (!panel->lge.cm_lut_name_list) {
+				pr_err("Unable to cm_lut_name_list alloc fail\n");
+			} else {
+				of_property_read_string_array(of_node, "lge,cm-lut-screen-mode-set-name", panel->lge.cm_lut_name_list, panel->lge.cm_lut_cnt);
+			}
+		}
+		lge_ddic_dsi_panel_parse_cm_lut_cmd_sets(panel, of_node);
+	}
 	return rc;
 }
 
@@ -1937,10 +2173,9 @@ int lge_dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 
 	u32 count;
 	enum dsi_cmd_set_state state;
-	const struct mipi_dsi_host_ops *ops = panel->host->ops;
+	const struct mipi_dsi_host_ops *ops = (panel != NULL)?panel->host->ops:NULL;
 
-
-	if (!panel || !panel->cur_mode)
+	if (!panel || !panel->cur_mode || !ops)
 		return -EINVAL;
 
 	cmds = cmd->cmds;

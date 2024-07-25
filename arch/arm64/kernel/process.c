@@ -61,7 +61,9 @@
 #include <asm/processor.h>
 #include <asm/scs.h>
 #include <asm/stacktrace.h>
+#ifdef CONFIG_MACH_LGE
 #include <linux/console.h>
+#endif
 
 #ifdef CONFIG_STACKPROTECTOR
 #include <linux/stackprotector.h>
@@ -199,14 +201,6 @@ void machine_restart(char *cmd)
 	while (1);
 }
 
-#ifdef CONFIG_LGE_POWEROFF_TIMEOUT
-void machine_restart_timeout(char *cmd)
-{
-       if (arm_pm_restart_timeout)
-	      arm_pm_restart_timeout(reboot_mode, cmd);
-}
-#endif
-
 static void print_pstate(struct pt_regs *regs)
 {
 	u64 pstate = regs->pstate;
@@ -239,6 +233,14 @@ static void print_pstate(struct pt_regs *regs)
 			pstate & PSR_UAO_BIT ? '+' : '-');
 	}
 }
+
+#ifdef CONFIG_LGE_POWEROFF_TIMEOUT
+void machine_restart_timeout(char *cmd)
+{
+       if (arm_pm_restart_timeout)
+	      arm_pm_restart_timeout(reboot_mode, cmd);
+}
+#endif
 
 /*
  * dump a block of kernel memory from around the given address
@@ -290,19 +292,12 @@ static void show_extra_register_data(struct pt_regs *regs, int nbytes)
 {
 	mm_segment_t fs;
 
-#ifdef CONFIG_MACH_LGE
-	console_uart_disable();
-#endif
 	fs = get_fs();
 	set_fs(KERNEL_DS);
 	show_data(regs->pc - nbytes, nbytes * 2, "PC");
 	show_data(regs->regs[30] - nbytes, nbytes * 2, "LR");
 	show_data(regs->sp - nbytes, nbytes * 2, "SP");
 	set_fs(fs);
-
-#ifdef CONFIG_MACH_LGE
-	console_uart_enable();
-#endif
 }
 
 void __show_regs(struct pt_regs *regs)

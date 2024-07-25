@@ -284,14 +284,14 @@ int lge_drs_mngr_begin(struct dsi_panel *panel)
 	return rc;
 }
 
-static int lge_drs_mngr_get_main_display(struct lge_drs_mngr *drs_mngr)
+static int lge_drs_mngr_get_main_display(struct dsi_panel *panel, struct lge_drs_mngr *drs_mngr)
 {
 	struct dsi_display *display = NULL;
 
 	if (!drs_mngr)
 		return -EINVAL;
 
-	display = primary_display;
+	display = container_of(panel->host, struct dsi_display, host);
 	if (display) {
 		drs_mngr->main_display = display;
 	} else {
@@ -315,7 +315,7 @@ int lge_drs_mngr_init(struct dsi_panel *panel)
 	mutex_init(&drs_mngr->drs_lock);
 
 	if (!drs_mngr->main_display) {
-		rc = lge_drs_mngr_get_main_display(drs_mngr);
+		rc = lge_drs_mngr_get_main_display(panel, drs_mngr);
 		if (rc) {
 			pr_err("fail to get main_display, rc=%d\n", rc);
 			return -EINVAL;
@@ -499,17 +499,22 @@ static ssize_t freeze_state_hal_store(struct device *dev,
 static DEVICE_ATTR(freeze_state_hal, S_IRUGO | S_IWUSR | S_IWGRP,
 		freeze_state_hal_show, freeze_state_hal_store);
 
-void lge_panel_drs_create_sysfs(struct dsi_panel *panel, struct class *class_panel)
-{
-	static struct device *panel_drs_dev = NULL;
+static struct attribute *drs_manager_attrs[] = {
+	&dev_attr_freeze_state_hal.attr,
+	NULL,
+};
 
-	if (class_panel) {
-		panel_drs_dev = device_create(class_panel, NULL, 0, panel, "drs");
-		if (IS_ERR(panel_drs_dev)) {
-			pr_err("Failed to create dev(panel_reg_dev)!\n");
-		} else {
-			if (device_create_file(panel_drs_dev, &dev_attr_freeze_state_hal) < 0)
-				pr_err("Failed to create panel/drs/freeze_state_hal\n");
+static const struct attribute_group drs_manager_attr_group = {
+	.name	= "drs",
+	.attrs	= drs_manager_attrs,
+};
+
+void lge_panel_drs_create_sysfs(struct dsi_panel *panel, struct device *panel_sysfs_dev)
+{
+	if (panel_sysfs_dev) {
+		if (panel->lge.use_drs_mngr) {
+			if (sysfs_create_group(&panel_sysfs_dev->kobj, &drs_manager_attr_group) < 0)
+				pr_err("create drs group fail!");
 		}
 	}
 }

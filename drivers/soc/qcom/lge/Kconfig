@@ -1,64 +1,144 @@
 config MACH_LGE
-	bool "Machine LGE"
-	help
-		Support for machine LGE.
+    bool "Machine LGE"
+    help
+        Support for machine LGE.
 
 menu "LGE Board Selection"
 
 config LGE_PM
-	tristate "KONA(SM8250) LGE POWER Feature"
+	tristate "KONA(SM7250) LGE POWER Feature"
 	depends on SPMI || MSM_SPMI
 	help
-	  Say Y here to enable support for KONA(SM8250)/PM8250 chip lge feature.
+	  Say Y here to enable support for KONA(SM7250)/PM7250 chip lge feature.
 	  Power Management, Battery charging, Battery Monitoring System
-	  with battery FET and fuel gauge.
+	  with battery FET and battery gauge.
 
 config LGE_PM_DEBUG
-	tristate "Support LGE PM Debug feature"
-	default n
-	depends on MACH_LGE
-	help
-	  LGE PM Debug Feature
+    bool "Support LGE PM Debug Feature"
+    default n
+    depends on MACH_LGE
+    help
+        LGE PM Debug Feature
 
-config MACH_KONA_TIMELM
-	bool "KONA TIMELM"
-	depends on ARCH_KONA
-	select MACH_LGE
-	select LGE_DM_VERITY_RECOVERY
-	help
-		Support for the Qualcomm KONA(SM8250) TIMELM device.
+config MACH_LITO_CAYMANLM
+    bool "LITO CAYMANLM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) CAYMANLM device.
 
-config MACH_KONA_TIMELM_LAO_COM
-	bool "KONA TIMELM_LAO_COM"
-	depends on ARCH_KONA
-	select MACH_LGE
-	select LGE_DM_VERITY_RECOVERY
-	help
-		Support for the Qualcomm KONA(SM8250) TIMELM_LAO_COM device.
+config MACH_LITO_CAYMANLM_LDU
+    bool "LITO CAYMANLM_LDU"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) CAYMANLM_LDU device.
 
-config MACH_KONA_TIMELM_LAO_LDU
-	bool "KONA TIMELM_LAO_LDU"
-	depends on ARCH_KONA
-	select MACH_LGE
-	select LGE_DM_VERITY_RECOVERY
-	help
-	Support for the Qualcomm KONA(SM8250) TIMELM_LAO_LDU device.
+config MACH_LITO_CAYMANLM_LAO_COM
+    bool " LITO_CAYMANLM_LAO_COM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) CAYMANLM_LAO_COM device.
 
-config MACH_KONA_TIMELM_DCM_JP
-	bool "KONA TIMELM_DCM_JP"
-	depends on ARCH_KONA
-	select LGE_DM_VERITY_RECOVERY
-	select MACH_LGE
-	help
-		Support for the Qualcomm KONA(SM8250) TIMELM_DCM_JP device.
+config MACH_LITO_CAYMANLM_DCM_JP
+    bool " LITO_CAYMANLM_DCM_JP"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) CAYMANLM_DCM_JP device.
 
-config MACH_KONA_TIMELM_SB_JP
-	bool "KONA TIMELM_SB_JP"
-	depends on ARCH_KONA
-	select LGE_DM_VERITY_RECOVERY
-	select MACH_LGE
-	help
-		Support for the Qualcomm KONA(SM8250) TIMELM_SB_JP device.
+config MACH_LITO_CAYMANLM_SB_JP
+    bool " LITO_CAYMANLM_SB_JP"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) CAYMANLM_SB_JP device.
+
+config MACH_LITO_WINGLM
+    bool "LITO WINGLM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) WINGLM device.
+
+config MACH_LITO_WINGLM_LAO_COM
+    bool " LITO_WINGLM_LAO_COM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) WINGLM_LAO_COM device.
+
+config MACH_LITO_VICTORIALM
+    bool "LITO VICTORIALM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) VICTORIALM device.
+
+config MACH_LITO_VICTORIALM_LAO_COM
+    bool " LITO_VICTORIALM_LAO_COM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) VICTORIALM_LAO_COM device.
+
+config MACH_LITO_ACELM
+    bool "LITO ACELM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) ACELM device.
+
+config MACH_LITO_ACELM_LAO_COM
+    bool " LITO_ACELM_LAO_COM"
+    depends on ARCH_LITO
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LITO(SM7250) ACELM_LAO_COM device.
+
+config MACH_LAGOON_ACEXLM
+    bool "LAGOON ACEXLM"
+    depends on ARCH_LAGOON
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LAGOON(SM6350) ACEXLM device.
+
+config MACH_LAGOON_ACEXLM_LAO_COM
+    bool "LAGOON ACEXLM LAO COM"
+    depends on ARCH_LAGOON
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LAGOON(SM6350) ACEXLM_LAO_COM device.
+
+config MACH_LAGOON_SMASHJLM
+    bool "LAGOON SMASHJLM"
+    depends on ARCH_LAGOON
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LAGOON(SM6350) SMASHJLM device.
+
+config MACH_LAGOON_SMASHJLM_COM1_JP
+    bool "LAGOON SMASHJLM COM1 JP"
+    depends on ARCH_LAGOON
+    select MACH_LGE
+    select LGE_DM_VERITY_RECOVERY
+    help
+        Support for the Qualcomm LAGOON(SM6350) SMASHJLM_COM1_JP device.
 
 config LGE_PM_PRM
 	tristate "Support LGE Power resource manager"
@@ -92,11 +172,11 @@ config LGE_BOOTLOADER_LOG
 	  LGE bootloader log
 
 config LGE_PSTORE_BACKUP
-        tristate "Support pstore backup"
-        default y
-        depends on MACH_LGE
-        help
-          Ramoops region is backed up to pstore partition
+	tristate "Support pstore backup"
+	default y
+	depends on MACH_LGE
+	help
+	  Ramoops region is backed up to pstore partition
 
 config LGE_BOOTLOADER_TIME_CHECKER
 	tristate "Supprt bootloader(LK, SBL) time"
@@ -106,6 +186,13 @@ config LGE_BOOTLOADER_TIME_CHECKER
 	  Check LK, SBL booting time at
 	  sys/module/lge_bootloader_time_checker/parameters/lk_time
 	  sys/module/lge_bootloader_time_checker/parameters/sbl_time
+
+config LGE_RTC_START_YEAR
+    int "Set rtc start time offset"
+    default n
+    depends on MACH_LGE
+    help
+      Set rtc start time offset
 
 config LGE_QSDL_SUPPORT
 	tristate "Support for Quality Statistics Data Logging"
@@ -137,6 +224,37 @@ config LGE_ONE_BINARY_SKU
 	depends on MACH_LGE
 	help
 	  LGE One Binary sku carrier
+
+config LGE_DUAL_SCREEN
+	bool "Support Dual Screen"
+	depends on MACH_LGE
+	help
+	  Say 'y" here to include support for dual screen.
+
+config LGE_SWIVEL_HALLIC_SUPPORT
+	bool "Support Swivel Hallic"
+	depends on MACH_LGE
+	help
+	  Say 'y" here to include support for swivel hallic.
+
+config LGE_DISPLAY_DIMMING_BOOT_SUPPORT
+	bool "Support dimming boot"
+	depends on MACH_LGE
+	help
+	  Say 'y" here to include support for dimming boot.
+
+config LGE_DISPLAY_BAN_CRACK_PANEL_SUPPORT
+	bool "Support ban crack panel"
+	depends on MACH_LGE
+	help
+	  Say 'y" here to include support for banning crack panel.
+
+config LFS_COMMON
+	bool "Support LGE Filesystem Kernel Feature"
+	default y if MACH_LGE
+	select NLS_UTF8
+	help
+	  Say 'y' here to enable LGE Filesystem Features
 
 config LGE_MME_BUS
         bool "boost interface for LGE MME"
@@ -186,25 +304,6 @@ config LGE_POWEROFF_TIMEOUT
 	default y
 	help
 	  Say 'y" here to include support for shutdown and reboot timeout.
-
-config LGE_DUAL_SCREEN
-        bool "Support Dual Screen"
-        depends on MACH_LGE
-        help
-          Say 'y" here to include support for dual screen.
-
-config LGE_DISPLAY_DIMMING_BOOT_SUPPORT
-        bool "Support dimming boot"
-        depends on MACH_LGE
-        help
-          Say 'y" here to include support for dimming boot.
-
-config LFS_COMMON
-        bool "Support LGE Filesystem Kernel Feature"
-        default y if MACH_LGE
-        select NLS_UTF8
-        help
-          Say 'y' here to enable LGE Filesystem Features
 
 endmenu
 

@@ -179,7 +179,7 @@ static const struct __extcon_info {
 		.id = EXTCON_DISP_HMD,
 		.name = "HMD",
 	},
-#if defined(CONFIG_MACH_KONA_TIMELM) || defined(CONFIG_LGE_DUAL_SCREEN)
+#if defined(CONFIG_LGE_DUAL_SCREEN)
 	[EXTCON_DISP_DS1] = {
 		.type = EXTCON_TYPE_DISP | EXTCON_TYPE_USB,
 		.id = EXTCON_DISP_DS1,
@@ -1206,12 +1206,7 @@ int extcon_dev_register(struct extcon_dev *edev)
 	edev->dev.release = extcon_dev_release;
 
 #ifdef CONFIG_MACH_LGE
-	if (edev->name != NULL &&
-		(!strcmp(edev->name, "h2w") || !strcmp(edev->name, "sar_backoff") || !strcmp(edev->name, "ram_status") || !strcmp(edev->name, "voc_mute_status")|| !strcmp(edev->name, "voice_bokeh_status"))
-	   )
-		dev_err(&edev->dev, "skip assign edev->dev.parent\n");
-	else
-		edev->name = dev_name(edev->dev.parent);
+	edev->name = edev->name ? edev->name : dev_name(edev->dev.parent);
 #else
 	edev->name = dev_name(edev->dev.parent);
 #endif
@@ -1220,7 +1215,6 @@ int extcon_dev_register(struct extcon_dev *edev)
 			"extcon device name is null\n");
 		return -EINVAL;
 	}
-
 #ifdef CONFIG_MACH_LGE
 	if(edev->name != NULL && (!strcmp(edev->name, "h2w"))) {
 		dev_set_name(&edev->dev, "extcon%lu", 100);

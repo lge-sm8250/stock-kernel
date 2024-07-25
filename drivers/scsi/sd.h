@@ -117,7 +117,6 @@ struct scsi_disk {
 	unsigned	urswrz : 1;
 	unsigned	security : 1;
 	unsigned	ignore_medium_access_errors : 1;
-
 #ifdef CONFIG_LFS_SCSI_USB_HOST_NOTIFY
 	wait_queue_head_t	delay_wait;
 	struct completion	scanning_done;

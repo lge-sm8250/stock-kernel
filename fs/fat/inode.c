@@ -1874,8 +1874,8 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 
 #ifdef CONFIG_LFS_FAT_FIX_BAD_FORMAT
 	if (!(sb->s_flags & MS_RDONLY)) {
-		fat_msg(sb, KERN_WARNING, "filesystem total sector %llu , device total sectors(%lld blocks)",
-					(u64)logical_sector_size * (u64)bpb.fat_total_sect >> sb->s_blocksize_bits,
+		fat_msg(sb, KERN_WARNING, "filesystem total sector %u , device total sectors(%lld blocks)",
+					logical_sector_size * bpb.fat_total_sect >> sb->s_blocksize_bits,
 					sb->s_bdev->bd_inode->i_size >> sb->s_blocksize_bits);
 
 		device_total_clusters = ((sb->s_bdev->bd_inode->i_size/logical_sector_size) - sbi->data_start)/sbi->sec_per_clus;
@@ -1883,15 +1883,15 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 						", device total clusters (%u)", total_clusters, device_total_clusters);
 
 		/* Bad formatted file system */
-		if((u64)logical_sector_size * (u64)bpb.fat_total_sect > sb->s_bdev->bd_inode->i_size) {
-				fat_msg(sb, KERN_WARNING, "bad geometry: block count %llu "
+		if (logical_sector_size * bpb.fat_total_sect > sb->s_bdev->bd_inode->i_size) {
+				fat_msg(sb, KERN_WARNING, "bad geometry: block count %u "
 						"exceeds size of device (%lld blocks)",
-						(u64)logical_sector_size * (u64)bpb.fat_total_sect >> sb->s_blocksize_bits,
+						logical_sector_size * bpb.fat_total_sect >> sb->s_blocksize_bits,
 						sb->s_bdev->bd_inode->i_size >> sb->s_blocksize_bits);
 				need_update_badcluster = device_total_clusters + FAT_START_ENT;
 		}
 
-		if(need_update_badcluster)
+		if (need_update_badcluster)
 			fat_ent_update_badclusters_after(sb,need_update_badcluster);
 	}
 #endif

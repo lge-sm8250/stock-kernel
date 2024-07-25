@@ -435,6 +435,54 @@ static int __init board_subrevno_setup(char *subrev_info)
 }
 __setup("androidboot.vendor.lge.hw.subrev=", board_subrevno_setup);
 
+static int lge_bd_antrev = HW_ANT_SKU_IGNORE;
+static char lge_antrev_str[16] = {0,};
+
+char *lge_get_board_antrevision(void)
+{
+	return lge_antrev_str;
+}
+
+int lge_get_board_antrev_no(void)
+{
+	return lge_bd_antrev;
+}
+
+EXPORT_SYMBOL(lge_get_board_antrevision);
+EXPORT_SYMBOL(lge_get_board_antrev_no);
+
+static int __init board_antrevno_setup(char *antrev_info)
+{
+	if (antrev_info == NULL) {
+		lge_bd_antrev = HW_ANT_SKU_IGNORE;
+		return 1;
+	}
+
+	strcpy(lge_antrev_str, antrev_info);
+
+	if      (strcmp("NA_SUB6", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_NA;
+	else if (strcmp("JP", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_JP;
+	else if (strcmp("GLOBAL", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_GLOBAL;
+	else if (strcmp("MEA", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_GLOBAL_MEA;
+	else if (strcmp("CN", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_CN;
+	else if (strcmp("NA_MMW", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_NA_CDMA_VZW;
+	else if (strcmp("KR_ALL", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_KR;
+	else if (strcmp("INDIA", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_NA_CDMA_VZW;
+
+	else if (strcmp("NA_SUB6_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_NA2;
+	else if (strcmp("JP_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_JP2;
+	else if (strcmp("GLOBAL_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_GLOBAL2;
+	else if (strcmp("MEA_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_GLOBAL_MEA2;
+	else if (strcmp("CN_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_CN2;
+	else if (strcmp("NA_MMW_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_NA_CDMA_VZW2;
+	else if (strcmp("KR_ALL_2", antrev_info) == 0) lge_bd_antrev = HW_ANT_SKU_KR2;
+
+	pr_info("[LGE-HW-ANTREV] %d %s\n", lge_bd_antrev, lge_antrev_str);
+
+	return 1;
+}
+__setup("androidboot.vendor.lge.ant_rev=", board_antrevno_setup);
+
 /*
    for download complete using LAF image
    return value : 1 --> right after laf complete & reset
@@ -524,9 +572,13 @@ int __init lge_sku_carrier_init(char *s)
 		lge_sku_carrier = HW_SKU_NA_CDMA;
 	else if (!strcmp(s, "NA_VZW"))
 		lge_sku_carrier = HW_SKU_NA_CDMA_VZW;
+	else if (!strcmp(s, "NA_MMW"))
+		lge_sku_carrier = HW_SKU_NA_CDMA_VZW;
 	else if (!strcmp(s, "NA_SPR"))
 		lge_sku_carrier = HW_SKU_NA_CDMA_SPR;
 	else if (!strcmp(s, "NA_ALL"))
+		lge_sku_carrier = HW_SKU_NA;
+	else if (!strcmp(s, "NA_SUB6"))
 		lge_sku_carrier = HW_SKU_NA;
 	else if (!strcmp(s, "GLOBAL"))
 		lge_sku_carrier = HW_SKU_GLOBAL;
@@ -540,6 +592,12 @@ int __init lge_sku_carrier_init(char *s)
 		lge_sku_carrier = HW_SKU_GLOBAL_SCA;
 	else if (!strcmp(s, "CN"))
 		lge_sku_carrier = HW_SKU_CN;
+	else if (!strcmp(s, "AU_OPEN"))
+		lge_sku_carrier = HW_SKU_AU_OPEN;
+	else if (!strcmp(s, "GLOBAL_CERT"))
+		lge_sku_carrier = HW_SKU_GLOBAL_CERT;
+	else if (!strcmp(s, "INDIA"))
+		lge_sku_carrier = HW_SKU_NA_CDMA_VZW;
 	else
 		lge_sku_carrier = HW_SKU_MAX;
 
@@ -549,9 +607,21 @@ int __init lge_sku_carrier_init(char *s)
 }
 __setup("androidboot.vendor.lge.sku_carrier=", lge_sku_carrier_init);
 
+char *lge_sku_str[] ={
+    "KR_ALL", "LGU", "SKT", "KT", "JP", "NA_GSM", "NA_ATT", "NA_TMUS",
+    "NA_RESERVED1", "NA_RESERVED2", "NA_CDMA", "NA_VZW", "NA_SPR", "NA_RESERVED3",
+    "NA_ALL", "GLOBAL", "ASIA", "MEA", "AU_TEL", "NA_SCA", "CN", "AU_OPEN",
+    "GLOBAL_CERT", "INDIA", "SKU_ERR"
+};
+
 enum lge_sku_carrier_type lge_get_sku_carrier(void)
 {
 	return lge_sku_carrier;
+}
+
+char *lge_get_sku_carrier_str(void)
+{
+	return lge_sku_str[lge_sku_carrier];
 }
 EXPORT_SYMBOL(lge_get_sku_carrier);
 
@@ -615,6 +685,8 @@ int __init lge_ntcode_op_init(char *s)
 		lge_ntcode_op = OP_OPEN_CA;
 	else if (!strcmp(s, "SPR"))
 		lge_ntcode_op = OP_SPR_US;
+	else if (!strcmp(s, "GLOBAL_IND"))
+		lge_ntcode_op = OP_GLOBAL_IND;
 	else
 		lge_ntcode_op = OP_GLOBAL;
 
@@ -630,6 +702,34 @@ enum lge_laop_operator_type lge_get_laop_operator(void)
 	return lge_ntcode_op;
 }
 EXPORT_SYMBOL(lge_get_laop_operator);
+
+#endif
+
+#ifdef CONFIG_MACH_LITO_CAYMANLM
+// lge_vari_main uses ADC value of PCB_SUB_REV.
+static int lge_vari_main;
+int lge_get_vari_main(void)
+{
+	return lge_vari_main;
+}
+EXPORT_SYMBOL(lge_get_vari_main);
+
+static int __init board_lge_vari_main_setup(char *s)
+{
+        if (!strcmp(s, "0"))
+                lge_vari_main = 0;  // QDAC
+        else if(!strcmp(s, "1"))
+                lge_vari_main = 1;  // No QDAC
+        else if(!strcmp(s, "2"))
+                lge_vari_main = 2;  // No QDAC+N41 (Sprint)
+        else
+                lge_vari_main = 1;  // No QDAC
+
+        pr_info("lge_vari_main : %d\n",lge_vari_main);
+
+        return 1;
+}
+__setup("lge.vari_main=", board_lge_vari_main_setup);
 #endif
 
 static int lge_dual_display_support;

@@ -63,6 +63,8 @@
 #define FP_POWER_ONOFF				0x05
 #define FP_SET_SPI_CLOCK			0x06
 #define FP_RESET_SET				0x07
+#define FP_POWER_ONOFF_EX			0x08
+#define FP_GET_PANEL_INFO			0x09
 
 /* trigger signal initial routine*/
 #define INT_TRIGGER_INIT			0xa4

@@ -9,9 +9,13 @@
 #include "dp_catalog.h"
 #include "dp_reg.h"
 #include "dp_debug.h"
+
+#if defined(CONFIG_LGE_DUAL_SCREEN) || defined(CONFIG_LGE_DISPLAY_WING_DP_TUNE)
+#include <soc/qcom/lge/board_lge.h>
+#endif
+
 #if defined(CONFIG_LGE_DUAL_SCREEN)
 #include <linux/lge_ds3.h>
-#include <soc/qcom/lge/board_lge.h>
 #endif
 
 #define dp_catalog_get_priv_v420(x) ({ \
@@ -39,9 +43,15 @@ extern struct lge_dp_display* get_lge_dp(void);
 
 static u8 const vm_pre_emphasis[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x14, 0x16, 0x17, 0xFF},       /* pe0, 5.5 db */
+	{0x14, 0x16, 0x17, 0xFF},       /* pe1, 6.3 db */
+	{0x15, 0x16, 0xFF, 0xFF},       /* pe2, 6.7 db */
+#else
 	{0x0B, 0x0F, 0x14, 0xFF},       /* pe0, 2.1 db */
 	{0x0B, 0x0F, 0x12, 0xFF},       /* pe1, 2.9 db */
-	{0x0B, 0x0F, 0xFF, 0xFF},       /* pe2, 6.0 db */
+	{0x0C, 0x0F, 0xFF, 0xFF},       /* pe2, 6.0 db */
+#endif
 #else
 	{0x00, 0x0E, 0x16, 0xFF},       /* pe0, 0 db */
 	{0x00, 0x0E, 0x16, 0xFF},       /* pe1, 3.5 db */
@@ -53,22 +63,51 @@ static u8 const vm_pre_emphasis[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 /* voltage swing, 0.2v and 1.0v are not support */
 static u8 const vm_voltage_swing[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
-	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v  */
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x0D, 0x0E, 0x0F, 0xFF}, /* sw0, 0.4v  */
+	{0x16, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1F, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+#else
+	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v	*/
 	{0x12, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1A, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+#endif
 #else
 	{0x07, 0x0F, 0x16, 0xFF}, /* sw0, 0.4v  */
 	{0x11, 0x1E, 0x1F, 0xFF}, /* sw1, 0.6 v */
-#endif
 	{0x1A, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+#endif
 	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
 };
 
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+static u8 const wing_sub_emp[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
+	{0x01, 0x04, 0x07, 0xFF}, /* pe0, 0.2 db */
+	{0x01, 0x04, 0x07, 0xFF}, /* pe1, 0.9 db */
+	{0x01, 0x04, 0xFF, 0xFF}, /* pe2, 1.6 db */
+	{0xFF, 0xFF, 0xFF, 0xFF}, /* pe3, 9.5 db */
+};
+static u8 const wing_sub_swing[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
+	{0x0D, 0x0E, 0x0F, 0xFF}, /* sw0, 0.4v  */
+	{0x16, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1F, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
+};
+#endif
+
 static u8 const dp_pre_emp_hbr2_hbr3[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
-	{0x0B, 0x0F, 0x14, 0xFF},       /* pe0, 2.1 db */
-	{0x0B, 0x0F, 0x12, 0xFF},       /* pe1, 2.9 db */
-	{0x0B, 0x0F, 0xFF, 0xFF},       /* pe2, 6.0 db */
-	{0xFF, 0xFF, 0xFF, 0xFF}        /* pe3, 9.5 db */
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x14, 0x16, 0x17, 0xFF},		/* pe0, 5.5 db */
+	{0x14, 0x16, 0x17, 0xFF},		/* pe1, 6.3 db */
+	{0x15, 0x16, 0xFF, 0xFF},		/* pe2, 6.7 db */
+	{0xFF, 0xFF, 0xFF, 0xFF}		/* pe3, 9.5 db */
+#else
+	{0x0B, 0x0F, 0x14, 0xFF},		/* pe0, 2.1 db */
+	{0x0B, 0x0F, 0x12, 0xFF},		/* pe1, 2.9 db */
+	{0x0C, 0x0F, 0xFF, 0xFF},		/* pe2, 6.0 db */
+	{0xFF, 0xFF, 0xFF, 0xFF}		/* pe3, 9.5 db */
+#endif
 #else
 	{0x00, 0x0C, 0x15, 0x1A}, /* pe0, 0 db */
 	{0x02, 0x0E, 0x16, 0xFF}, /* pe1, 3.5 db */
@@ -79,10 +118,18 @@ static u8 const dp_pre_emp_hbr2_hbr3[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 
 static u8 const dp_swing_hbr2_hbr3[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
-	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v  */
-	{0x12, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
-	{0x1B, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x0D, 0x0E, 0x0F, 0xFF}, /* sw0, 0.4v	*/
+	{0x16, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1F, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
 	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
+#else
+	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v	*/
+	{0x12, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1A, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
+
+#endif
 #else
 	{0x02, 0x12, 0x16, 0x1A}, /* sw0, 0.4v  */
 	{0x09, 0x19, 0x1F, 0xFF}, /* sw1, 0.6v */
@@ -93,10 +140,17 @@ static u8 const dp_swing_hbr2_hbr3[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 
 static u8 const dp_pre_emp_hbr_rbr[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
-	{0x0B, 0x0F, 0x14, 0xFF},       /* pe0, 2.1 db */
-	{0x0B, 0x0F, 0x12, 0xFF},       /* pe1, 2.9 db */
-	{0x0B, 0x0F, 0xFF, 0xFF},       /* pe2, 6.0 db */
-	{0xFF, 0xFF, 0xFF, 0xFF}        /* pe3, 9.5 db */
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x14, 0x16, 0x17, 0xFF},		/* pe0, 5.5 db */
+	{0x14, 0x16, 0x17, 0xFF},		/* pe1, 6.3 db */
+	{0x15, 0x16, 0xFF, 0xFF},		/* pe2, 6.7 db */
+	{0xFF, 0xFF, 0xFF, 0xFF}		/* pe3, 9.5 db */
+#else
+	{0x0B, 0x0F, 0x14, 0xFF},		/* pe0, 2.1 db */
+	{0x0B, 0x0F, 0x12, 0xFF},		/* pe1, 2.9 db */
+	{0x0C, 0x0F, 0xFF, 0xFF},		/* pe2, 6.0 db */
+	{0xFF, 0xFF, 0xFF, 0xFF}		/* pe3, 9.5 db */
+#endif
 #else
 	{0x00, 0x0E, 0x15, 0x1A}, /* pe0, 0 db */
 	{0x00, 0x0E, 0x15, 0xFF}, /* pe1, 3.5 db */
@@ -107,10 +161,17 @@ static u8 const dp_pre_emp_hbr_rbr[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 
 static u8 const dp_swing_hbr_rbr[MAX_VOLTAGE_LEVELS][MAX_PRE_EMP_LEVELS] = {
 #ifdef CONFIG_LGE_DISPLAY_COMMON
-	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v  */
-	{0x12, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
-	{0x1B, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	{0x0D, 0x0E, 0x0F, 0xFF}, /* sw0, 0.4v	*/
+	{0x16, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1F, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
 	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
+#else
+	{0x08, 0x10, 0x17, 0xFF}, /* sw0, 0.4v	*/
+	{0x12, 0x1F, 0x1F, 0xFF}, /* sw1, 0.6 v */
+	{0x1A, 0x1F, 0xFF, 0xFF}, /* sw1, 0.8 v */
+	{0xFF, 0xFF, 0xFF, 0xFF}  /* sw1, 1.2 v, optional */
+#endif
 #else
 	{0x08, 0x0F, 0x16, 0x1F}, /* sw0, 0.4v */
 	{0x11, 0x1E, 0x1F, 0xFF}, /* sw1, 0.6v */
@@ -284,6 +345,9 @@ static void dp_catalog_ctrl_update_vx_px_v420(struct dp_catalog_ctrl *ctrl,
 	u8 value0, value1;
 	u32 version;
 #ifdef CONFIG_LGE_DISPLAY_COMMON
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+	int hw_sub_antrev = lge_get_board_antrev_no();
+#endif
 	struct lge_dp_display *lge_dp = get_lge_dp();
 #endif
 #if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
@@ -295,6 +359,7 @@ static void dp_catalog_ctrl_update_vx_px_v420(struct dp_catalog_ctrl *ctrl,
 		DP_ERR("invalid input\n");
 		return;
 	}
+
 	DP_DEBUG("hw: v=%d p=%d, high=%d\n", v_level, p_level, high);
 
 	catalog = dp_catalog_get_priv_v420(ctrl);
@@ -306,6 +371,13 @@ static void dp_catalog_ctrl_update_vx_px_v420(struct dp_catalog_ctrl *ctrl,
 	 * For DP controller versions 1.2.3 and 1.2.4
 	 */
 	if ((version == 0x10020003) || (version == 0x10020004)) {
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+		if (hw_sub_antrev == HW_ANT_SKU_KR2 || hw_sub_antrev == HW_ANT_SKU_NA_CDMA_VZW2 || hw_sub_antrev == HW_ANT_SKU_GLOBAL2) {
+			value0 = wing_sub_swing[v_level][p_level];
+			value1 = wing_sub_emp[v_level][p_level];
+		}
+		else {
+#endif
 		if (high) {
 			value0 = dp_swing_hbr2_hbr3[v_level][p_level];
 			value1 = dp_pre_emp_hbr2_hbr3[v_level][p_level];
@@ -313,15 +385,19 @@ static void dp_catalog_ctrl_update_vx_px_v420(struct dp_catalog_ctrl *ctrl,
 			value0 = dp_swing_hbr_rbr[v_level][p_level];
 			value1 = dp_pre_emp_hbr_rbr[v_level][p_level];
 		}
+#ifdef CONFIG_LGE_DISPLAY_WING_DP_TUNE
+		}
+	pr_info("[drm-dp] subrevid : %d", hw_sub_antrev);
+#endif
 	} else {
 		value0 = vm_voltage_swing[v_level][p_level];
 		value1 = vm_pre_emphasis[v_level][p_level];
 	}
 #if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
 	if (is_ds_connected()) {
-		value0 = 0x10; // swing level : 557.5 mV
-		value1 = 0x0B; // post emp : -2.6 dB
-		value2 = 0x00; // pre emp : 0.0 dB
+		value0 = 0x10; // 557.5 mV
+		value1 = 0x11; // post emp : -4.4 dB
+		value2 = 0x00; // 0.0 db
 	}
 	pr_err("[drm-dp] value0 0x%0x, value1 0x%0x, value2 0x%0x\n",
 			value0, value1, value2);
@@ -349,7 +425,8 @@ static void dp_catalog_ctrl_update_vx_px_v420(struct dp_catalog_ctrl *ctrl,
 	value0 |= BIT(5);
 	value1 |= BIT(5);
 #if IS_ENABLED(CONFIG_LGE_DUAL_SCREEN)
-	value2 |= BIT(5);
+	if (is_ds_connected())
+		value2 |= BIT(5);
 #endif
 
 	/* Configure host and panel only if both values are allowed */

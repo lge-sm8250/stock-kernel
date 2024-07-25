@@ -52,6 +52,7 @@
 #define DW7800_REG_07 7
 #define DW7800_REG_08 8
 #define DW7800_REG_09 9
+
 /*
 ** This SPI supports only one actuator.
 */
@@ -94,6 +95,7 @@ VibeStatus I2CWriteWithResendOnError(unsigned char address, VibeUInt16 nBufferSi
 unsigned char fifo = 0;
 bool skip_fifo_check = false;
 static bool is_immersion_haptic_on = false;
+static bool is_i2c_probe_success = true;
 
 static char const * const i2c_rsrcs[] = {"i2c_clk", "i2c_sda"};
 struct qup_i2c_clk_path_vote {
@@ -156,22 +158,12 @@ struct dw7800_dev {
     struct i2c_client *i2c;
 };
 
-#ifdef CONFIG_MACH_KONA_TIMELM
-static struct dw7800_dev dw7800 = {
-    .htime = 2,         /* 10ms timeout */
-    .freq = 0,          /* 8kHz */
-    .ldo = 9,           /* 3.0V LDO */
-    .i2c_addr = DEVICE_ADDR,
-};
-#else
 static struct dw7800_dev dw7800 = {
     .htime = 2,         /* 10ms timeout */
     .freq = 0,          /* 8kHz */
     .ldo = 8,           /* 2.8V LDO */
     .i2c_addr = DEVICE_ADDR,
 };
-
-#endif
 
 /*
 ** I2C Driver
@@ -262,11 +254,9 @@ static ssize_t set_moisture_vib(struct device *dev,
     unsigned char fifo = 0;
     struct i2c_msg send_msg;
     struct i2c_msg recv_msg[2];
-    printk("%s: entry ",__func__);
 
     if(!dw7800.i2c)
         return VIBE_E_FAIL;
-    printk("%s: entry 2",__func__);
 
     send_msg.addr = dw7800.i2c->addr;
     send_msg.flags = 0;
@@ -540,58 +530,58 @@ static int dw7800_probe(struct i2c_client* client, const struct i2c_device_id* i
     int ret = 0;
 
     if(client->dev.of_node) {
-        DbgOut((DBL_ERROR, "dw7800_probe: dw7800_parse_dt.\n"));
+        pr_info("dw7800_probe: dw7800_parse_dt.\n");
         dw7800_parse_dt(&client->dev, &vib);
     } else {
-        DbgOut((DBL_ERROR, "dw7800_probe: client is NULL.\n"));
+        pr_err("dw7800_probe: client is NULL.\n");
         return -EPROBE_DEFER;
     }
 
     if(vib.vpwr_on != 1) {
         if(!(vib.vreg_l21)) {
             //vib.vreg_l21 = regulator_get(&client->dev, "vib_vdd");
-            DbgOut((DBL_ERROR, "dw7800_probe: After regulator_get.\n"));
+            pr_err("dw7800_probe: After regulator_get.\n");
             if(IS_ERR(vib.vreg_l21)) {
                 vib.vreg_l21 = NULL;
-                DbgOut((DBL_ERROR, "dw7800_probe: vib.vreg_l21 is NULL.\n"));
+                pr_err("dw7800_probe: vib.vreg_l21 is NULL.\n");
                 return -EPROBE_DEFER;
             }
         } else {
-            DbgOut((DBL_ERROR, "dw7800_probe: regulator_get fail1.\n"));
+            pr_err("dw7800_probe: regulator_get fail1.\n");
             return -EPROBE_DEFER;
         }
     } else {
-        DbgOut((DBL_ERROR, "dw7800_probe: regulator_get fail2.\n"));
+        pr_err("dw7800_probe: regulator_get fail2.\n");
     }
 
     mutex_lock(&vib_lock);
 
     if (vib.vpwr_on != 1) {
-        DbgOut((DBL_ERROR, "dw7800_probe: regulator_enable.\n"));
+        pr_info("dw7800_probe: regulator_enable.\n");
         //rc = regulator_enable(vib.vreg_l21);
     } else {
-        DbgOut((DBL_ERROR, "dw7800_probe: regulator_enable faile.\n"));
+        pr_err("dw7800_probe: regulator_enable faile.\n");
         return -EPROBE_DEFER;
     }
 
     mutex_unlock(&vib_lock);
 
     if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
-        DbgOut((DBL_ERROR, "dw7800_probe: i2c_check_functionality failed.\n"));
+        pr_err("dw7800_probe: i2c_check_functionality failed.\n");
         return -ENODEV;
     }
 
     dw7800.i2c = client;
     dw7800_poweron(&dw7800);
-    DbgOut((DBL_ERROR, "dw7800_probe: After dw7800_poweron.\n"));
 
     /* get device id */
     if (2 != i2c_recv_buf(client, DW7800_VERSION, &dw7800.version, 1)) {
-        DbgOut((DBL_ERROR, "dw7800_probe: failed to read version from dw7800.\n"));
+        pr_err("dw7800_probe: failed to read version from dw7800.\n");
+		is_i2c_probe_success = false;
         /*return -ENODEV;*/
     }
 
-    DbgOut((DBL_ERROR, "dw7800_probe.\n"));
+    pr_info("dw7800_probe.\n");
 
 #ifdef DW7800_SYSFS
     ret = sysfs_create_group(&client->dev.kobj, &dw7800_attr_group);
@@ -648,7 +638,7 @@ EXPORT_SYMBOL(a2v_seq_write);
 
 unsigned char a2v_byte_read(u8 addr)
 {
-    unsigned char reg_val;
+    unsigned char reg_val = 0;
 
     if(is_immersion_haptic_on)
         return -1;
@@ -772,9 +762,7 @@ VibeStatus I2CWriteData(unsigned char address, VibeUInt16 nBufferSizeInBytes, Vi
 {
     unsigned char buf1[I2C_BUF_MAX];
     int buf_remain_size = nBufferSizeInBytes % I2C_BUF_MAX + 2;
-
-//    unsigned char buf2[buf_remain_size];
-    unsigned char buf2[100];
+    unsigned char buf2[I2C_BUF_MAX];
 
     if (!dw7800.i2c)
         return VIBE_E_FAIL;
@@ -939,5 +927,10 @@ IMMVIBESPIAPI int ImmVibeSPI_ForceOut_BufferFull(void)
         skip_fifo_check = false;
 
     return fifo > DW7800_FIFOFULL_TARGET;
+}
+
+IMMVIBESPIAPI bool i2c_probe_success()
+{
+	return is_i2c_probe_success;
 }
 #endif

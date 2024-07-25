@@ -311,7 +311,6 @@ static void dp_audio_setup_sdp(struct dp_audio_private *audio)
 	dp_audio_infoframe_sdp(audio);
 	dp_audio_copy_management_sdp(audio);
 	dp_audio_isrc_sdp(audio);
-	DP_ERR("dp_audio_setup_sdp\n");
 }
 
 static void dp_audio_setup_acr(struct dp_audio_private *audio)
@@ -356,7 +355,6 @@ static void dp_audio_enable(struct dp_audio_private *audio, bool enable)
 		DP_WARN("session inactive. enable=%d\n", enable);
 		return;
 	}
-	DP_ERR("dp_audio_enable\n");
 	catalog->data = enable;
 	catalog->enable(catalog);
 
@@ -417,7 +415,7 @@ static int dp_audio_info_setup(struct platform_device *pdev,
 
 	mutex_unlock(&audio->ops_lock);
 
-	DP_ERR("audio stream configured\n");
+	DP_DEBUG("audio stream configured\n");
 
 	return rc;
 }
@@ -504,7 +502,7 @@ static void dp_audio_teardown_done(struct platform_device *pdev)
 	atomic_set(&audio->acked, 1);
 	complete_all(&audio->hpd_comp);
 
-	DP_ERR("dp_audio_teardown_done\n");
+	DP_DEBUG("audio engine disabled\n");
 }
 
 static int dp_audio_ack_done(struct platform_device *pdev, u32 ack)
@@ -522,7 +520,7 @@ static int dp_audio_ack_done(struct platform_device *pdev, u32 ack)
 		audio->ack_enabled = ack & AUDIO_ACK_ENABLE ?
 			true : false;
 
-		DP_ERR("audio ack feature %s\n",
+		DP_DEBUG("audio ack feature %s\n",
 			audio->ack_enabled ? "enabled" : "disabled");
 		goto end;
 	}
@@ -532,7 +530,7 @@ static int dp_audio_ack_done(struct platform_device *pdev, u32 ack)
 
 	ack_hpd = ack & AUDIO_ACK_CONNECT;
 
-	DP_ERR("acknowledging audio (%d)\n", ack_hpd);
+	DP_DEBUG("acknowledging audio (%d)\n", ack_hpd);
 
 	if (!audio->engine_on) {
 		atomic_set(&audio->acked, 1);
@@ -553,8 +551,6 @@ static int dp_audio_codec_ready(struct platform_device *pdev)
 		rc = PTR_ERR(audio);
 		goto end;
 	}
-
-	DP_ERR("dp_audio_codec_ready\n");
 
 	queue_delayed_work(audio->notify_workqueue,
 			&audio->notify_delayed_work, HZ/4);
@@ -705,7 +701,6 @@ static int dp_audio_notify(struct dp_audio_private *audio, u32 state)
 	DP_DEBUG("success\n");
 #endif
 end:
-	DP_ERR("rc %d, state %d acked %d, engine_on %d\n",rc,state,atomic_read(&audio->acked),audio->engine_on);
 	return rc;
 }
 

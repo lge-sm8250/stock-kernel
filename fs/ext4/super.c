@@ -482,7 +482,7 @@ static void ext4_handle_error(struct super_block *sb)
 		smp_wmb();
 		sb->s_flags |= SB_RDONLY;
 #ifdef CONFIG_LFS_EXT4
-		if(!strcmp(EXT4_SB(sb)->s_es->s_volume_name,"data") &&
+		if (!strcmp(EXT4_SB(sb)->s_es->s_volume_name,"data") &&
 			system_state != SYSTEM_RESTART &&
 			system_state != SYSTEM_POWER_OFF)
 			printk(KERN_CRIT "EXT4-fs data remounted as RO in ext4_handle_error\n");
@@ -709,7 +709,7 @@ void __ext4_abort(struct super_block *sb, const char *function,
 		/* LGE_CHANGE, BSP-FS
 		 * put panic when ext4 partition(data partition) is remounted as Read Only
 		 */
-		if(!strcmp(EXT4_SB(sb)->s_es->s_volume_name,"data") &&
+		if (!strcmp(EXT4_SB(sb)->s_es->s_volume_name,"data") &&
 			system_state != SYSTEM_RESTART &&
 			system_state != SYSTEM_POWER_OFF &&
 			!test_opt(sb, ERRORS_RO))

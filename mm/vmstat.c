@@ -1125,6 +1125,7 @@ const char * const vmstat_text[] = {
 	"nr_zspages",
 #endif
 	"nr_free_cma",
+	"nr_free_highatomic",
 #ifdef CONFIG_MIGRATE_HIGHORDER
 	"nr_free_highorder",
 #endif
@@ -1302,6 +1303,12 @@ const char * const vmstat_text[] = {
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
 	"speculative_pgfault_anon",
 	"speculative_pgfault_file",
+#endif
+#ifdef CONFIG_SCAN_BALANCE_COUNT
+	"nr_scan_equal",
+	"nr_scan_fract",
+	"nr_scan_anon",
+	"nr_scan_file",
 #endif
 #endif /* CONFIG_VM_EVENT_COUNTERS */
 };
@@ -1578,9 +1585,9 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   "\n        present  %lu"
 		   "\n        managed  %lu",
 		   zone_page_state(zone, NR_FREE_PAGES),
-           min_wmark_pages(zone) - zone->watermark_boost,
-           low_wmark_pages(zone) - zone->watermark_boost,
-           high_wmark_pages(zone) - zone->watermark_boost,
+		   min_wmark_pages(zone),
+		   low_wmark_pages(zone),
+		   high_wmark_pages(zone),
 		   zone->spanned_pages,
 		   zone->present_pages,
 		   zone->managed_pages);

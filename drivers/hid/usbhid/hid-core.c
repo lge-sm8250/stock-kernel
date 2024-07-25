@@ -1395,6 +1395,7 @@ static void usbhid_stop(struct hid_device *hid)
 		flush_workqueue(hid->uevent_wq);
 		destroy_workqueue(hid->uevent_wq);
 	}
+
 	mutex_lock(&usbhid->mutex);
 
 	clear_bit(HID_STARTED, &usbhid->iofl);

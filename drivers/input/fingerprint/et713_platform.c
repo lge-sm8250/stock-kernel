@@ -47,7 +47,6 @@
 
 #include "et713.h"
 //#include "navi_input.h"
-
 #define EDGE_TRIGGER_FALLING 0x0
 #define EDGE_TRIGGER_RAISING 0x1
 #define LEVEL_TRIGGER_LOW 0x2
@@ -215,22 +214,6 @@ void interrupt_timer_routine(struct timer_list *t)
 	bdata->int_count = 0;
 	wake_up_interruptible(&interrupt_waitq);
 }
-
-/*
-void interrupt_timer_routine(unsigned long _data)
-{
-	struct interrupt_desc *bdata = (struct interrupt_desc *)_data;
-
-	DEBUG_PRINT("[egis] FPS interrupt count = %d detect_threshold = %d\n", bdata->int_count, bdata->detect_threshold);
-	if (bdata->int_count >= bdata->detect_threshold) {
-		bdata->finger_on = 1;
-		DEBUG_PRINT("[egis] FPS triggered!\n");
-	} else
-		DEBUG_PRINT("[egis] FPS not triggered!\n");
-	bdata->int_count = 0;
-	wake_up_interruptible(&interrupt_waitq);
-}
-*/
 
 static irqreturn_t fp_eint_func(int irq, void *dev_id)
 {
@@ -447,6 +430,30 @@ static void egis_power_onoff(struct egis_data *egis, int power_onoff)
 	}
 }
 
+static void egis_power_onoff_ex(struct egis_data *egis, int power_onoff)
+{
+	DEBUG_PRINT("[egis] %s   power_onoff_ex = %d \n", __func__, power_onoff);
+	if (power_onoff) {
+	    vreg_setup(egis, "vcc_spi", 1);    //pinctrl_action(egis->pd, "egistec,et713", "et713_ldo_high");
+	    msleep(2);
+	    pinctrl_action(egis->pd, "egistec,et713", "et713_reset_active");
+		msleep(2);
+		pinctrl_action(egis->pd, "egistec,et713", "et713_reset_reset");
+		msleep(13);
+		pinctrl_action(egis->pd, "egistec,et713", "et713_reset_active");
+		msleep(8);
+	} else {
+	    vreg_setup(egis, "vcc_spi", 0);    //pinctrl_action(egis->pd, "egistec,et713", "et713_ldo_low");
+	    pinctrl_action(egis->pd, "egistec,et713", "et713_reset_reset");
+	    msleep(50);
+	}
+}
+
+static void egis_get_panel_info(u8 *panel_info)
+{
+	/* Default panel info is visionox */
+	*panel_info = 1; //visionox
+}
 
 static ssize_t egis_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
@@ -465,7 +472,7 @@ static long egis_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	int retval = 0;
 	struct egis_data *egis;
 	struct ioctl_cmd data;
-
+	u8 panel_type = 0;
 	DEBUG_PRINT("[egis] %s", __func__);
 	memset(&data, 0, sizeof(data));
 	egis = filp->private_data;
@@ -491,7 +498,14 @@ static long egis_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		egis_power_onoff(egis, data.int_mode);  // Use data.int_mode as power setting. 1 = on, 0 = off.
 		DEBUG_PRINT("[egis] %s: egis_power_onoff = %d\n", __func__, data.int_mode);
 		break;
-
+	case FP_POWER_ONOFF_EX:
+		if (copy_from_user(&data, (int __user *)arg, sizeof(data))) {
+			retval = -EFAULT;
+			break;
+		}
+		egis_power_onoff_ex(egis, data.int_mode);  // Use data.int_mode as power setting. 1 = on, 0 = off.
+		DEBUG_PRINT("[egis] %s: egis_power_onoff_ex = %d\n", __func__, data.int_mode);
+		break;
 	case FP_RESET_SET:
 		if (copy_from_user(&data, (int __user *)arg, sizeof(data))) {
 			retval = -EFAULT;
@@ -508,6 +522,11 @@ static long egis_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case INT_TRIGGER_ABORT:
 		DEBUG_PRINT("[egis] %s: INT_TRIGGER_ABORT\n", __func__);
 		fps_interrupt_abort();
+		break;
+	case FP_GET_PANEL_INFO:
+		DEBUG_PRINT("[egis] %s: FP_GET_PANEL_INFO\n", __func__);
+		egis_get_panel_info(&panel_type);
+	        copy_to_user((void __user *) arg, (void *) &panel_type, sizeof(u8));
 		break;
 	default:
 		retval = -ENOTTY;
@@ -684,7 +703,7 @@ static int egis_remove(struct platform_device *pdev)
 	DEBUG_PRINT("[egis] %s (#%d)\n", __func__, __LINE__);
 	free_irq(gpio_irq, g_data);
 	del_timer_sync(&fps_ints.timer);
-        wakeup_source_unregister(wakeup_source_fp);
+	wakeup_source_unregister(wakeup_source_fp);
 	request_irq_done = 0;
 	return 0;
 }
@@ -778,7 +797,12 @@ static int egis_probe(struct platform_device *pdev)
 
 	add_timer(&fps_ints.timer);
 
-        wakeup_source_fp = wakeup_source_register(dev, "et713_wakeup");
+	wakeup_source_fp = wakeup_source_register(dev, "et713_wakeup");
+
+	if (!wakeup_source_fp){
+	    DEBUG_PRINT("[egis] %s: wakeup_source_register failed\n", __func__);
+	    goto egis_probe_platformInit_failed;
+	}
 
 	DEBUG_PRINT("[egis] %s: initialize success %d\n", __func__, status);
 

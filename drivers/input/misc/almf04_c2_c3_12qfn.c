@@ -2181,15 +2181,6 @@ static int almf04_probe(struct i2c_client *client,
 #endif
 	int err = 0;
 
-	/* Check for Normal booting mode or not */
-	if (lge_get_boot_mode() == LGE_BOOT_MODE_NORMAL) {
-		/* Check for support by carrier */
-		if (lge_get_capsensor() == 0)
-			return -ENODEV;
-	} else {
-		PINFO("ALMF04 NOT NORMAL BOOT");
-	}
-
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE)) {
 		return -EIO;
 	}
@@ -2214,6 +2205,34 @@ static int almf04_probe(struct i2c_client *client,
 		if (err)
 			return err;
 
+		/* Check for Normal booting mode or not */
+		if (lge_get_boot_mode() == LGE_BOOT_MODE_NORMAL) {
+		    /* Check for support by carrier */
+		    if (lge_get_capsensor() == 0) {
+			PINFO("ALMF04 get_capsensor is 0");
+			return -ENODEV;
+		    }
+		} else {
+		    PINFO("ALMF04 NOT NORMAL BOOT");
+		}
+
+// Change InitCodeVal for CAYMANLM GLOBAL SKU only
+#if defined(CONFIG_MACH_LITO_CAYMANLM) && defined(InitCodeVal_BY_SKU)
+		switch( lge_get_sku_carrier() )
+		{
+			case HW_SKU_GLOBAL :
+			case HW_SKU_GLOBAL_ASIA :
+			case HW_SKU_GLOBAL_MEA :
+			case HW_SKU_AU_TEL :
+			case HW_SKU_GLOBAL_SCA :
+				memcpy(InitCodeVal, InitCodeVal_Global, CNT_INITCODE * sizeof(unsigned char));
+				PINFO("almf04 operate initcode as GLOBAL SKU, lge_get_sku_carrier() = %d", lge_get_sku_carrier());
+				break;
+			default :
+				PINFO("almf04 operate initcode as DEFAULT, lge_get_sku_carrier() = %d", lge_get_sku_carrier());
+				break;
+		}
+#endif
 #if defined(CONFIG_MACH_SDM845_JUDYPN)
 		if(strcmp(lge_get_board_subrevision(),"subrev_0"))
 		{
